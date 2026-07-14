@@ -8,8 +8,13 @@ import datetime as dt
 import json
 import os
 import platform
+import queue
 import re
+import signal
+import shutil
 import subprocess
+import tempfile
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -53,6 +58,9 @@ DEFAULT_SETTINGS = {
         "require_confirm_for_git_push": True,
         "stop_on_command_failure": True,
     },
+    "execution": {
+        "command_idle_timeout_seconds": 300,
+    },
 }
 
 
@@ -61,6 +69,7 @@ COMMAND_KEY = "run"
 ACTION_ORDER = (COMMAND_KEY, "build", "deploy", "start", "stop", "restart", "logs")
 PLATFORM_MAC = "mac"
 PLATFORM_WINDOWS = "windows"
+COMMAND_IDLE_TIMEOUT_EXIT_CODE = 124
 
 
 @dataclass
@@ -589,6 +598,59 @@ def execute_action(
     write_audit_log(project, service, env_name, env_cfg, confirm_action, results, runner.log_path)
     print(f"日志: {runner.log_path}")
 
+
+def command_idle_timeout_seconds(settings: dict[str, Any]) -> int:
+    raw = settings.get("execution", {}).get("command_idle_timeout_seconds", 300)
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 300
+
+
+def command_process_options() -> dict[str, Any]:
+    if os.name == "posix":
+        return {"start_new_session": True}
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {}
+
+
+def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+    if proc.poll() is not None:
+        return
+    if os.name == "posix":
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        if os.name == "posix":
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return
+        else:
+            proc.kill()
+
+
+def enqueue_process_output(proc: subprocess.Popen[str], output_queue: queue.Queue[str | None]) -> None:
+    if not proc.stdout:
+        output_queue.put(None)
+        return
+    try:
+        while True:
+            chunk = proc.stdout.read(1)
+            if chunk == "":
+                break
+            output_queue.put(chunk)
+    finally:
+        output_queue.put(None)
+
+
 class CommandRunner:
     def __init__(self, settings: dict[str, Any], secrets: dict[str, str]) -> None:
         self.settings = settings
@@ -621,36 +683,68 @@ class CommandRunner:
             bufsize=1,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            **command_process_options(),
         )
         output_chunks: list[str] = []
+        idle_timeout = command_idle_timeout_seconds(self.settings)
+        last_output_at = dt.datetime.now()
+        output_queue: queue.Queue[str | None] = queue.Queue()
+        reader = threading.Thread(target=enqueue_process_output, args=(proc, output_queue), daemon=True)
+        reader.start()
+        timed_out = False
         with self.log_path.open("a", encoding="utf-8") as fh:
             host = env_cfg.get("host", "-") if isinstance(env_cfg, dict) else "-"
             fh.write(f"project={project.get('id')} service={service.get('id')} env={env_name} action={action} host={host}\n")
             fh.write(f"started_at={start.isoformat()}\n")
             fh.write(f"command={masked_command}\n")
             fh.write("--- output ---\n")
-            if proc.stdout:
+            while True:
                 try:
-                    while True:
-                        chunk = proc.stdout.read(1)
-                        if chunk == "" and proc.poll() is not None:
-                            break
-                        if not chunk:
-                            continue
-                        output_chunks.append(chunk)
-                        masked_chunk = mask_text(chunk, self.secrets.values())
-                        print(masked_chunk, end="", flush=True)
-                        fh.write(masked_chunk)
+                    chunk = output_queue.get(timeout=0.5)
+                except queue.Empty:
+                    if proc.poll() is not None and not reader.is_alive():
+                        break
+                    idle_seconds = (dt.datetime.now() - last_output_at).total_seconds()
+                    if idle_timeout and idle_seconds >= idle_timeout:
+                        timeout_message = (
+                            f"\n命令超过 {idle_timeout} 秒没有输出，已终止。"
+                            "如远端备份或上传需要更久，可调整 settings.yaml 中的 "
+                            "execution.command_idle_timeout_seconds，设为 0 可关闭。\n"
+                        )
+                        output_chunks.append(timeout_message)
+                        print(timeout_message, end="", flush=True)
+                        fh.write(timeout_message)
                         fh.flush()
-                finally:
-                    proc.stdout.close()
-        exit_code = proc.wait()
+                        timed_out = True
+                        terminate_process_tree(proc)
+                        break
+                    continue
+                if chunk is None:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                last_output_at = dt.datetime.now()
+                output_chunks.append(chunk)
+                masked_chunk = mask_text(chunk, self.secrets.values())
+                print(masked_chunk, end="", flush=True)
+                fh.write(masked_chunk)
+                fh.flush()
+            if proc.stdout:
+                proc.stdout.close()
+        reader.join(timeout=1)
+        exit_code = COMMAND_IDLE_TIMEOUT_EXIT_CODE if timed_out else proc.wait()
         end = dt.datetime.now()
-        output = mask_text("".join(output_chunks), self.secrets.values())
+        raw_output = "".join(output_chunks)
+        output = mask_text(raw_output, self.secrets.values())
         with self.log_path.open("a", encoding="utf-8") as fh:
             if output and not output.endswith("\n"):
                 fh.write("\n")
             fh.write(f"finished_at={end.isoformat()} exit_code={exit_code}\n")
+            if exit_code == 0:
+                cleaned_paths = cleanup_temp_publish_dirs(raw_output)
+                for cleaned_path in cleaned_paths:
+                    fh.write(f"cleanup_temp_dir={cleaned_path}\n")
+                    print(f"已清理本地临时发布目录: {cleaned_path}")
         return CommandResult(masked_command, exit_code, output)
 
     def append_log(
@@ -677,6 +771,28 @@ class CommandRunner:
 
 def command_has_inline_secret(command: str) -> bool:
     return bool(TOKEN_RE.search(command) or re.search(r"(?i)--(?:password|token|secret|key)[=\s]\S+", command))
+
+
+def cleanup_temp_publish_dirs(output: str) -> list[str]:
+    temp_root = Path(tempfile.gettempdir()).resolve()
+    cleaned: list[str] = []
+    for raw_path in re.findall(r"(/[^\s'\"`]+)", output):
+        candidate = Path(raw_path.rstrip(".,;:)"))
+        if not candidate.is_absolute():
+            continue
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if not resolved.is_dir():
+            continue
+        if temp_root not in resolved.parents:
+            continue
+        if not re.fullmatch(r"[^/]+\.[A-Za-z0-9]{4,}", resolved.name):
+            continue
+        shutil.rmtree(resolved)
+        cleaned.append(str(resolved))
+    return cleaned
 
 
 def mask_text(text: str, secret_values: Iterable[str]) -> str:

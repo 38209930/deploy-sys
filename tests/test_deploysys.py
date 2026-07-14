@@ -1,5 +1,6 @@
 import json
 import tempfile
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -75,6 +76,77 @@ class DeploySysTests(unittest.TestCase):
                 log_text = runner.log_path.read_text(encoding="utf-8")
                 self.assertIn("hello world", log_text)
                 self.assertIn("exit_code=0", log_text)
+            finally:
+                deploysys.LOGS_DIR = old_logs
+
+    def test_command_runner_cleans_temp_publish_dir_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_logs = deploysys.LOGS_DIR
+            deploysys.LOGS_DIR = Path(tmp)
+            try:
+                runner = deploysys.CommandRunner({}, {})
+                with patch("sys.stdout", new_callable=StringIO) as output:
+                    result = runner.run(
+                        "d=$(mktemp -d \"${TMPDIR:-/tmp}/deploysys-test.XXXXXX\"); echo \"$d\"",
+                        {"id": "p1"},
+                        {"id": "svc1"},
+                        "test",
+                        {},
+                        "命令",
+                    )
+                self.assertEqual(result.exit_code, 0)
+                temp_dir = Path(output.getvalue().splitlines()[-2])
+                self.assertFalse(temp_dir.exists())
+                self.assertIn("cleanup_temp_dir=", runner.log_path.read_text(encoding="utf-8"))
+            finally:
+                deploysys.LOGS_DIR = old_logs
+
+    def test_cleanup_temp_publish_dirs_keeps_failed_command_artifacts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_logs = deploysys.LOGS_DIR
+            deploysys.LOGS_DIR = Path(tmp)
+            try:
+                runner = deploysys.CommandRunner({}, {})
+                with patch("sys.stdout", new_callable=StringIO) as output:
+                    result = runner.run(
+                        "d=$(mktemp -d \"${TMPDIR:-/tmp}/deploysys-test.XXXXXX\"); echo \"$d\"; exit 2",
+                        {"id": "p1"},
+                        {"id": "svc1"},
+                        "test",
+                        {},
+                        "命令",
+                    )
+                self.assertEqual(result.exit_code, 2)
+                temp_dir = Path(output.getvalue().splitlines()[-1])
+                self.assertTrue(temp_dir.exists())
+                temp_dir.rmdir()
+            finally:
+                deploysys.LOGS_DIR = old_logs
+
+    def test_command_idle_timeout_seconds_defaults_and_normalizes(self):
+        self.assertEqual(deploysys.command_idle_timeout_seconds({}), 300)
+        self.assertEqual(deploysys.command_idle_timeout_seconds({"execution": {"command_idle_timeout_seconds": "0"}}), 0)
+        self.assertEqual(deploysys.command_idle_timeout_seconds({"execution": {"command_idle_timeout_seconds": "bad"}}), 300)
+
+    def test_command_runner_stops_when_command_has_no_output_too_long(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_logs = deploysys.LOGS_DIR
+            deploysys.LOGS_DIR = Path(tmp)
+            try:
+                runner = deploysys.CommandRunner({"execution": {"command_idle_timeout_seconds": 1}}, {})
+                with patch("sys.stdout", new_callable=StringIO) as output:
+                    result = runner.run(
+                        f"{sys.executable} -c 'import time; time.sleep(10)'",
+                        {"id": "p1"},
+                        {"id": "svc1"},
+                        "test",
+                        {},
+                        "命令",
+                    )
+                self.assertEqual(result.exit_code, deploysys.COMMAND_IDLE_TIMEOUT_EXIT_CODE)
+                self.assertIn("命令超过 1 秒没有输出", output.getvalue())
+                log_text = runner.log_path.read_text(encoding="utf-8")
+                self.assertIn("exit_code=124", log_text)
             finally:
                 deploysys.LOGS_DIR = old_logs
 

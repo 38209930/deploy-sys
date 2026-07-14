@@ -10,3 +10,5 @@ safety:
   require_strong_confirm_for_prod: true
   require_confirm_for_git_push: true
   stop_on_command_failure: true
+execution:
+  command_idle_timeout_seconds: 300
