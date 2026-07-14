@@ -1,0 +1,12 @@
+app:
+  default_environment: test
+  log_retention_days: 30
+security:
+  secrets_file: config/secrets.enc
+  require_master_password: true
+  mask_secrets_in_output: true
+  block_commit_if_secret_file_staged: true
+safety:
+  require_strong_confirm_for_prod: true
+  require_confirm_for_git_push: true
+  stop_on_command_failure: true

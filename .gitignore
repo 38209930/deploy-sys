@@ -1,0 +1,7 @@
+config/secrets*
+logs/
+data/local*
+__pycache__/
+.pytest_cache/
+data/operation_logs.jsonl
+.DS_Store
