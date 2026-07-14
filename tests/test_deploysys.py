@@ -55,6 +55,29 @@ class DeploySysTests(unittest.TestCase):
             finally:
                 deploysys.DATA_DIR = old_data
 
+    def test_command_runner_streams_output_to_terminal_and_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_logs = deploysys.LOGS_DIR
+            deploysys.LOGS_DIR = Path(tmp)
+            try:
+                runner = deploysys.CommandRunner({}, {})
+                with patch("sys.stdout", new_callable=StringIO) as output:
+                    result = runner.run(
+                        "printf 'hello'; printf ' world\\n'",
+                        {"id": "p1"},
+                        {"id": "svc1"},
+                        "test",
+                        {},
+                        "命令",
+                    )
+                self.assertEqual(result.exit_code, 0)
+                self.assertIn("hello world", output.getvalue())
+                log_text = runner.log_path.read_text(encoding="utf-8")
+                self.assertIn("hello world", log_text)
+                self.assertIn("exit_code=0", log_text)
+            finally:
+                deploysys.LOGS_DIR = old_logs
+
     def test_project_services_supports_legacy_single_service(self):
         project = {
             "id": "mall",

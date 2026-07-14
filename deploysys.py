@@ -612,21 +612,46 @@ class CommandRunner:
         start = dt.datetime.now()
         env = os.environ.copy()
         env.update(self.secrets)
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             command,
             cwd=None,
             env=env,
             shell=True,
             text=True,
+            bufsize=1,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
-        output = mask_text(proc.stdout or "", self.secrets.values())
+        output_chunks: list[str] = []
+        with self.log_path.open("a", encoding="utf-8") as fh:
+            host = env_cfg.get("host", "-") if isinstance(env_cfg, dict) else "-"
+            fh.write(f"project={project.get('id')} service={service.get('id')} env={env_name} action={action} host={host}\n")
+            fh.write(f"started_at={start.isoformat()}\n")
+            fh.write(f"command={masked_command}\n")
+            fh.write("--- output ---\n")
+            if proc.stdout:
+                try:
+                    while True:
+                        chunk = proc.stdout.read(1)
+                        if chunk == "" and proc.poll() is not None:
+                            break
+                        if not chunk:
+                            continue
+                        output_chunks.append(chunk)
+                        masked_chunk = mask_text(chunk, self.secrets.values())
+                        print(masked_chunk, end="", flush=True)
+                        fh.write(masked_chunk)
+                        fh.flush()
+                finally:
+                    proc.stdout.close()
+        exit_code = proc.wait()
         end = dt.datetime.now()
-        self.append_log(project, service, env_name, action, "-", masked_command, proc.returncode, output, start, end)
-        if output:
-            print(output[-2000:])
-        return CommandResult(masked_command, proc.returncode, output)
+        output = mask_text("".join(output_chunks), self.secrets.values())
+        with self.log_path.open("a", encoding="utf-8") as fh:
+            if output and not output.endswith("\n"):
+                fh.write("\n")
+            fh.write(f"finished_at={end.isoformat()} exit_code={exit_code}\n")
+        return CommandResult(masked_command, exit_code, output)
 
     def append_log(
         self,
