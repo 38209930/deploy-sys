@@ -141,6 +141,7 @@ def ensure_base_files() -> None:
 def ensure_gitignore() -> None:
     required = [
         "config/secrets*",
+        "config/projects.local.yaml",
         "logs/",
         "data/local*",
         "data/operation_logs.jsonl",
