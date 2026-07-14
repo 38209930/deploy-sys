@@ -7,6 +7,7 @@
 ## Features
 
 - 项目、子任务、环境三层管理：`project -> service -> test/prod`
+- 新增项目时自动识别 macOS / Windows，识别失败时可手动选择
 - 每个环境保存一组原始命令，支持粘贴多行命令
 - 状态检查命令按环境单独保存，首次使用时引导录入
 - 生产环境执行前要求确认词
@@ -31,6 +32,7 @@ python3 deploysys.py
 首次启动会自动生成：
 
 - `config/projects.yaml`
+- `config/projects.local.yaml`
 - `config/settings.yaml`
 - `config/secrets.enc`
 - `.gitignore`
@@ -53,6 +55,7 @@ python3 deploysys.py
 录入模型保持简单：
 
 - 项目：例如 `demo-platform`
+- 运行系统：`mac` 或 `windows`，新增项目时自动识别当前系统
 - 子任务服务：例如 `front-api`、`back-api`、`web-admin`
 - 环境：固定为 `test` 和 `prod`
 - 命令：每个环境保存一组多行原始命令
@@ -68,6 +71,7 @@ projects:
   - id: demo-platform
     name: Demo Platform
     type: other
+    platform: mac
     services:
       - id: front-api
         name: Front API
@@ -100,6 +104,8 @@ projects:
 
 ## Safety Notes
 
+- `config/projects.yaml` 是公开模板，默认保持 `projects: []`。
+- 本机真实项目配置写入 `config/projects.local.yaml`，该文件默认不会提交到 Git。
 - `config/secrets*`、`logs/`、`data/operation_logs.jsonl` 默认不会提交到 Git。
 - 不要把真实密码、Token、证书、私钥写进公开配置或 README。
 - 如果命令里必须使用密钥，建议从本机环境变量、私有配置文件或部署脚本内部读取。

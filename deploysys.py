@@ -26,6 +26,7 @@ CONFIG_DIR = ROOT / "config"
 LOGS_DIR = ROOT / "logs"
 DATA_DIR = ROOT / "data"
 PROJECTS_FILE = CONFIG_DIR / "projects.yaml"
+PROJECTS_LOCAL_FILE = CONFIG_DIR / "projects.local.yaml"
 SETTINGS_FILE = CONFIG_DIR / "settings.yaml"
 DEFAULT_SECRETS_FILE = CONFIG_DIR / "secrets.enc"
 TEMP_SECRETS_FILE = CONFIG_DIR / "secrets.yaml"
@@ -58,6 +59,8 @@ DEFAULT_SETTINGS = {
 DEFAULT_PROJECTS = {"projects": []}
 COMMAND_KEY = "run"
 ACTION_ORDER = (COMMAND_KEY, "build", "deploy", "start", "stop", "restart", "logs")
+PLATFORM_MAC = "mac"
+PLATFORM_WINDOWS = "windows"
 
 
 @dataclass
@@ -90,12 +93,12 @@ def prompt_secret(message: str) -> str:
 def main() -> int:
     ensure_base_files()
     settings = load_yaml(SETTINGS_FILE, DEFAULT_SETTINGS)
-    projects = load_yaml(PROJECTS_FILE, DEFAULT_PROJECTS)
+    projects = load_projects()
 
     if not projects.get("projects"):
         print("检测到还没有项目配置，进入首次启动向导。")
         first_run_wizard(settings, projects)
-        projects = load_yaml(PROJECTS_FILE, DEFAULT_PROJECTS)
+        projects = load_projects()
 
     while True:
         print("\n==== deploy-sys ====")
@@ -112,12 +115,12 @@ def main() -> int:
             status_flow(settings, projects)
         elif choice == "3":
             add_project_wizard(projects, settings)
-            projects = load_yaml(PROJECTS_FILE, DEFAULT_PROJECTS)
+            projects = load_projects()
         elif choice == "4":
             view_project_flow(projects)
         elif choice == "5":
             delete_config_flow(projects)
-            projects = load_yaml(PROJECTS_FILE, DEFAULT_PROJECTS)
+            projects = load_projects()
         elif choice == "0":
             return 0
         else:
@@ -164,6 +167,18 @@ def load_yaml(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def active_projects_file() -> Path:
+    return PROJECTS_LOCAL_FILE if PROJECTS_LOCAL_FILE.exists() else PROJECTS_FILE
+
+
+def load_projects() -> dict[str, Any]:
+    return load_yaml(active_projects_file(), DEFAULT_PROJECTS)
+
+
+def save_projects(projects: dict[str, Any]) -> None:
+    write_yaml(PROJECTS_LOCAL_FILE, projects)
+
+
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as fh:
@@ -201,16 +216,23 @@ def add_project_wizard(projects: dict[str, Any], settings: dict[str, Any]) -> No
         print(render_project_details(existing_project))
         if confirm("是否继续为该项目新增子任务？"):
             append_services_to_project(existing_project, settings)
-            write_yaml(PROJECTS_FILE, projects)
+            save_projects(projects)
         return
 
     name = ask_required("项目名称")
     project_type = prompt_text("项目分组类型(dotnet/java/vue3/other，默认 other)", "other").strip() or "other"
-    project = {"id": project_id, "name": name, "type": project_type, "services": []}
+    project_platform = ask_project_platform()
+    project = {
+        "id": project_id,
+        "name": name,
+        "type": project_type,
+        "platform": project_platform,
+        "services": [],
+    }
     projects.setdefault("projects", []).append(project)
     append_services_to_project(project, settings)
-    write_yaml(PROJECTS_FILE, projects)
-    print(f"已写入项目配置: {PROJECTS_FILE}")
+    save_projects(projects)
+    print(f"已写入项目配置: {PROJECTS_LOCAL_FILE}")
 
 
 def append_services_to_project(project: dict[str, Any], settings: dict[str, Any]) -> None:
@@ -274,6 +296,52 @@ def ask_required(prompt: str) -> str:
         print("不能为空。")
 
 
+def detect_platform() -> str | None:
+    system = platform.system()
+    if system == "Darwin":
+        return PLATFORM_MAC
+    if system == "Windows":
+        return PLATFORM_WINDOWS
+    return None
+
+
+def normalize_platform(value: str) -> str | None:
+    lowered = value.strip().lower()
+    if lowered in {"mac", "macos", "darwin", "osx"}:
+        return PLATFORM_MAC
+    if lowered in {"windows", "win", "win32"}:
+        return PLATFORM_WINDOWS
+    return None
+
+
+def platform_label(platform_value: str) -> str:
+    return "macOS" if platform_value == PLATFORM_MAC else "Windows"
+
+
+def ask_project_platform() -> str:
+    detected = detect_platform()
+    if detected:
+        print(f"已识别当前系统: {platform_label(detected)}")
+        while True:
+            raw = prompt_text("项目运行系统(mac/windows)", detected).strip()
+            if not raw:
+                return detected
+            normalized = normalize_platform(raw)
+            if normalized:
+                return normalized
+            print("请输入 mac 或 windows。")
+    print("未能自动识别系统类型，请手动选择。")
+    while True:
+        print("1. macOS")
+        print("2. Windows")
+        choice = prompt_text("请选择").strip()
+        if choice == "1":
+            return PLATFORM_MAC
+        if choice == "2":
+            return PLATFORM_WINDOWS
+        print("无效选择。")
+
+
 def ask_environment_commands(env_name: str) -> dict[str, list[str]]:
     commands = ask_command_lines(f"{env_name} 环境命令")
     return {COMMAND_KEY: commands} if commands else {}
@@ -323,7 +391,7 @@ def view_project_flow(projects: dict[str, Any]) -> None:
     project = select_project(projects)
     if not project:
         return
-    print(f"项目配置文件: {PROJECTS_FILE}")
+    print(f"项目配置文件: {active_projects_file()}")
     print(render_project_details(project))
 
 
@@ -394,6 +462,9 @@ def render_project_details(project: dict[str, Any]) -> str:
         f"项目: {project.get('name')} ({project.get('id')})",
         f"类型: {project.get('type', 'other')}",
     ]
+    platform_value = project.get("platform")
+    if platform_value:
+        lines.append(f"运行系统: {platform_label(platform_value)}")
     services = project_services(project)
     if not services:
         lines.append("子任务: 无")
@@ -843,8 +914,8 @@ def status_flow(settings: dict[str, Any], projects: dict[str, Any]) -> None:
             print("未录入状态检查命令。")
             return
         env_cfg["status_commands"] = status_commands
-        write_yaml(PROJECTS_FILE, projects)
-        print(f"已保存状态检查命令到: {PROJECTS_FILE}")
+        save_projects(projects)
+        print(f"已保存状态检查命令到: {PROJECTS_LOCAL_FILE}")
     execute_status_commands(project, service, env_name, env_cfg, status_commands, settings)
 
 
@@ -897,7 +968,7 @@ def delete_project_flow(projects: dict[str, Any]) -> None:
         return
     items = projects.get("projects") or []
     projects["projects"] = [item for item in items if item.get("id") != project.get("id")]
-    write_yaml(PROJECTS_FILE, projects)
+    save_projects(projects)
     print(f"已删除项目: {project.get('name')} ({project.get('id')})")
 
 
@@ -913,7 +984,7 @@ def delete_service_flow(projects: dict[str, Any]) -> None:
     services = project.get("services")
     if isinstance(services, list):
         project["services"] = [item for item in services if item.get("id") != service.get("id")]
-        write_yaml(PROJECTS_FILE, projects)
+        save_projects(projects)
         print(f"已删除子任务: {service.get('name')} ({service.get('id')})")
         return
     raise ConfigError("旧版单服务配置不能直接删除子任务，请删除整个项目后重新录入。")
@@ -937,7 +1008,7 @@ def delete_action_commands_flow(projects: dict[str, Any]) -> None:
     if not strong_confirm(f"{project['id']}/{service['id']}", env_name, f"delete-{action_label(action)}"):
         return
     commands.pop(action, None)
-    write_yaml(PROJECTS_FILE, projects)
+    save_projects(projects)
     print(f"已删除 {service.get('name')} {env_name} 环境下的 {action} 命令。")
 
 

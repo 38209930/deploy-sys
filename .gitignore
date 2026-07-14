@@ -1,4 +1,5 @@
 config/secrets*
+config/projects.local.yaml
 logs/
 data/local*
 __pycache__/

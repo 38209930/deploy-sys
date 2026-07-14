@@ -96,7 +96,7 @@ class DeploySysTests(unittest.TestCase):
         with patch("deploysys.prompt_text", side_effect=["1"]), patch("sys.stdout", new_callable=StringIO) as output:
             deploysys.view_project_flow(projects)
         rendered = output.getvalue()
-        self.assertIn(str(deploysys.PROJECTS_FILE), rendered)
+        self.assertIn(str(deploysys.active_projects_file()), rendered)
         self.assertIn("Mall (mall)", rendered)
 
     def test_render_project_details_contains_services_and_commands(self):
@@ -174,7 +174,9 @@ class DeploySysTests(unittest.TestCase):
     def test_delete_service_flow_removes_service(self):
         with tempfile.TemporaryDirectory() as tmp:
             old_projects = deploysys.PROJECTS_FILE
+            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
             deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
+            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
             projects = {
                 "projects": [
                     {
@@ -190,15 +192,18 @@ class DeploySysTests(unittest.TestCase):
             try:
                 with patch("deploysys.prompt_text", side_effect=["1", "1", "mall/front-api local delete-service"]):
                     deploysys.delete_service_flow(projects)
-                saved = deploysys.load_yaml(deploysys.PROJECTS_FILE, {"projects": []})
+                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
                 self.assertEqual([item["id"] for item in saved["projects"][0]["services"]], ["back-api"])
             finally:
                 deploysys.PROJECTS_FILE = old_projects
+                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
 
     def test_delete_action_commands_flow_removes_only_selected_action(self):
         with tempfile.TemporaryDirectory() as tmp:
             old_projects = deploysys.PROJECTS_FILE
+            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
             deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
+            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
             projects = {
                 "projects": [
                     {
@@ -224,12 +229,13 @@ class DeploySysTests(unittest.TestCase):
             try:
                 with patch("deploysys.prompt_text", side_effect=["1", "1", "1", "2", "mall/front-api test delete-deploy"]):
                     deploysys.delete_action_commands_flow(projects)
-                saved = deploysys.load_yaml(deploysys.PROJECTS_FILE, {"projects": []})
+                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
                 commands = saved["projects"][0]["services"][0]["environments"]["test"]["commands"]
                 self.assertIn("build", commands)
                 self.assertNotIn("deploy", commands)
             finally:
                 deploysys.PROJECTS_FILE = old_projects
+                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
 
     def test_extract_repo_from_command(self):
         self.assertEqual(
@@ -255,7 +261,9 @@ class DeploySysTests(unittest.TestCase):
     def test_status_flow_prompts_saves_and_executes_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             old_projects = deploysys.PROJECTS_FILE
+            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
             deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
+            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
             projects = {
                 "projects": [
                     {
@@ -277,12 +285,13 @@ class DeploySysTests(unittest.TestCase):
                     "deploysys.execute_status_commands"
                 ) as execute:
                     deploysys.status_flow(settings, projects)
-                saved = deploysys.load_yaml(deploysys.PROJECTS_FILE, {"projects": []})
+                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
                 env_cfg = saved["projects"][0]["services"][0]["environments"]["test"]
                 self.assertEqual(env_cfg["status_commands"], ["echo status"])
                 execute.assert_called_once()
             finally:
                 deploysys.PROJECTS_FILE = old_projects
+                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
 
     def test_collect_service_identity_allows_reentry(self):
         project = {"id": "mall", "services": []}
@@ -301,6 +310,49 @@ class DeploySysTests(unittest.TestCase):
         ):
             service_id, service_name, service_type = deploysys.collect_service_identity(project)
         self.assertEqual((service_id, service_name, service_type), ("front-api", "正确名称", "vue3"))
+
+    def test_detect_platform_on_darwin(self):
+        with patch("deploysys.platform.system", return_value="Darwin"):
+            self.assertEqual(deploysys.detect_platform(), deploysys.PLATFORM_MAC)
+
+    def test_detect_platform_on_windows(self):
+        with patch("deploysys.platform.system", return_value="Windows"):
+            self.assertEqual(deploysys.detect_platform(), deploysys.PLATFORM_WINDOWS)
+
+    def test_detect_platform_returns_none_for_unknown(self):
+        with patch("deploysys.platform.system", return_value="Linux"):
+            self.assertIsNone(deploysys.detect_platform())
+
+    def test_normalize_platform_accepts_aliases(self):
+        self.assertEqual(deploysys.normalize_platform("macOS"), deploysys.PLATFORM_MAC)
+        self.assertEqual(deploysys.normalize_platform("win"), deploysys.PLATFORM_WINDOWS)
+        self.assertIsNone(deploysys.normalize_platform("linux"))
+
+    def test_ask_project_platform_uses_detected_default(self):
+        with patch("deploysys.detect_platform", return_value=deploysys.PLATFORM_MAC), patch(
+            "deploysys.prompt_text", return_value=""
+        ):
+            self.assertEqual(deploysys.ask_project_platform(), deploysys.PLATFORM_MAC)
+
+    def test_ask_project_platform_allows_override_when_detected(self):
+        with patch("deploysys.detect_platform", return_value=deploysys.PLATFORM_MAC), patch(
+            "deploysys.prompt_text", return_value="windows"
+        ):
+            self.assertEqual(deploysys.ask_project_platform(), deploysys.PLATFORM_WINDOWS)
+
+    def test_ask_project_platform_prompts_manual_selection_when_unknown(self):
+        with patch("deploysys.detect_platform", return_value=None), patch("deploysys.prompt_text", return_value="2"):
+            self.assertEqual(deploysys.ask_project_platform(), deploysys.PLATFORM_WINDOWS)
+
+    def test_render_project_details_contains_platform(self):
+        project = {
+            "id": "mall",
+            "name": "Mall",
+            "platform": deploysys.PLATFORM_MAC,
+            "services": [],
+        }
+        rendered = deploysys.render_project_details(project)
+        self.assertIn("运行系统: macOS", rendered)
 
 
 if __name__ == "__main__":
