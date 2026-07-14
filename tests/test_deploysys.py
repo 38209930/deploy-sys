@@ -353,6 +353,51 @@ class DeploySysTests(unittest.TestCase):
             commands = deploysys.ask_environment_commands("prod")
         self.assertEqual(commands, {"run": ["cd /tmp/app", "bash deploy.sh"]})
 
+    def test_add_service_to_existing_project_flow_appends_and_saves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            old_projects = deploysys.PROJECTS_FILE
+            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
+            deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
+            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
+            projects = {
+                "projects": [
+                    {
+                        "id": "mall",
+                        "name": "Mall",
+                        "services": [
+                            {"id": "front-api", "name": "Front API"},
+                        ],
+                    }
+                ]
+            }
+            try:
+                with patch(
+                    "deploysys.prompt_text",
+                    side_effect=[
+                        "1",
+                        "back-api",
+                        "Back API",
+                        "",
+                        "y",
+                        "echo test",
+                        "",
+                        "echo prod",
+                        "",
+                        "n",
+                    ],
+                ):
+                    deploysys.add_service_to_existing_project_flow(projects, {})
+                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
+                services = saved["projects"][0]["services"]
+                self.assertEqual([item["id"] for item in services], ["front-api", "back-api"])
+                self.assertEqual(
+                    services[1]["environments"]["prod"]["commands"]["run"],
+                    ["echo prod"],
+                )
+            finally:
+                deploysys.PROJECTS_FILE = old_projects
+                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
+
     def test_status_flow_prompts_saves_and_executes_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             old_projects = deploysys.PROJECTS_FILE

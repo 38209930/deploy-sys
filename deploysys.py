@@ -114,8 +114,9 @@ def main() -> int:
         print("1. 项目部署/服务操作")
         print("2. 服务状态检查")
         print("3. 新增项目")
-        print("4. 查看项目配置")
-        print("5. 删除已录入内容")
+        print("4. 给已有项目新增服务")
+        print("5. 查看项目配置")
+        print("6. 删除已录入内容")
         print("0. 退出")
         choice = prompt_text("请选择").strip()
         if choice == "1":
@@ -126,8 +127,11 @@ def main() -> int:
             add_project_wizard(projects, settings)
             projects = load_projects()
         elif choice == "4":
-            view_project_flow(projects)
+            add_service_to_existing_project_flow(projects, settings)
+            projects = load_projects()
         elif choice == "5":
+            view_project_flow(projects)
+        elif choice == "6":
             delete_config_flow(projects)
             projects = load_projects()
         elif choice == "0":
@@ -257,6 +261,17 @@ def append_services_to_project(project: dict[str, Any], settings: dict[str, Any]
         if not confirm("是否继续新增下一个服务？"):
             break
     project.setdefault("services", []).extend(services)
+
+
+def add_service_to_existing_project_flow(projects: dict[str, Any], settings: dict[str, Any]) -> None:
+    project = select_project(projects)
+    if not project:
+        return
+    print("当前项目配置如下：")
+    print(render_project_details(project))
+    append_services_to_project(project, settings)
+    save_projects(projects)
+    print(f"已保存项目配置: {PROJECTS_LOCAL_FILE}")
 
 
 def collect_service_config(project: dict[str, Any]) -> dict[str, Any] | None:
