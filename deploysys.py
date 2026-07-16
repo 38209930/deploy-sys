@@ -54,7 +54,6 @@ DEFAULT_SETTINGS = {
         "block_commit_if_secret_file_staged": True,
     },
     "safety": {
-        "require_strong_confirm_for_prod": True,
         "require_confirm_for_git_push": True,
         "stop_on_command_failure": True,
     },
@@ -593,9 +592,6 @@ def execute_action(
     settings: dict[str, Any],
 ) -> None:
     confirm_action = action_label(action)
-    if env_name == "prod" and settings.get("safety", {}).get("require_strong_confirm_for_prod", True):
-        if not strong_confirm(f"{project['id']}/{service['id']}", env_name, confirm_action):
-            return
     if any(command_has_inline_secret(cmd) for cmd in commands):
         print("警告：命令中疑似包含明文密码或 token。")
         if not strong_confirm(f"{project['id']}/{service['id']}", env_name, confirm_action):
@@ -829,7 +825,7 @@ def strong_confirm(project_id: str, env_name: str, action: str) -> bool:
     accepted_phrases = {phrase}
     if action == "执行":
         accepted_phrases.add(f"{project_id} {env_name} 命令")
-    typed = prompt_text(f"生产环境/高风险操作，请完整输入确认词 `{phrase}`，不能只输入 y").strip()
+    typed = prompt_text(f"高风险操作，请完整输入确认词 `{phrase}`，不能只输入 y").strip()
     if typed not in accepted_phrases:
         print(f"确认词不匹配，已取消。需要输入：{phrase}")
         return False

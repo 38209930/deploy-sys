@@ -7,7 +7,6 @@ security:
   mask_secrets_in_output: true
   block_commit_if_secret_file_staged: true
 safety:
-  require_strong_confirm_for_prod: true
   require_confirm_for_git_push: true
   stop_on_command_failure: true
 execution:

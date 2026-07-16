@@ -50,6 +50,25 @@ class DeploySysTests(unittest.TestCase):
             self.assertFalse(deploysys.strong_confirm("apollo/admin-pc", "prod", "执行"))
         self.assertIn("需要输入：apollo/admin-pc prod 执行", output.getvalue())
 
+    def test_execute_action_does_not_confirm_for_prod_by_default(self):
+        with patch("deploysys.strong_confirm") as confirm, patch("deploysys.CommandRunner") as runner_cls, patch(
+            "deploysys.write_audit_log"
+        ):
+            runner = runner_cls.return_value
+            runner.run.return_value = deploysys.CommandResult("echo ok", 0, "ok")
+            runner.log_path = Path("/tmp/deploysys-test.log")
+            deploysys.execute_action(
+                {"id": "apollo"},
+                {"id": "admin-pc"},
+                "prod",
+                {},
+                deploysys.COMMAND_KEY,
+                ["echo ok"],
+                {"safety": {"stop_on_command_failure": True}},
+            )
+        confirm.assert_not_called()
+        runner.run.assert_called_once()
+
     def test_audit_log_masks_command_supplied_by_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
             old_data = deploysys.DATA_DIR
