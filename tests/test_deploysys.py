@@ -36,6 +36,20 @@ class DeploySysTests(unittest.TestCase):
         self.assertTrue(deploysys.command_has_inline_secret("TOKEN=abc sh deploy.sh"))
         self.assertFalse(deploysys.command_has_inline_secret("sh deploy.sh"))
 
+    def test_action_label_uses_execute_for_default_command(self):
+        self.assertEqual(deploysys.action_label(deploysys.COMMAND_KEY), "执行")
+
+    def test_strong_confirm_accepts_execute_phrase_and_legacy_command_phrase(self):
+        with patch("deploysys.prompt_text", return_value="apollo/admin-pc prod 执行"):
+            self.assertTrue(deploysys.strong_confirm("apollo/admin-pc", "prod", "执行"))
+        with patch("deploysys.prompt_text", return_value="apollo/admin-pc prod 命令"):
+            self.assertTrue(deploysys.strong_confirm("apollo/admin-pc", "prod", "执行"))
+
+    def test_strong_confirm_rejects_short_yes(self):
+        with patch("deploysys.prompt_text", return_value="y"), patch("sys.stdout", new_callable=StringIO) as output:
+            self.assertFalse(deploysys.strong_confirm("apollo/admin-pc", "prod", "执行"))
+        self.assertIn("需要输入：apollo/admin-pc prod 执行", output.getvalue())
+
     def test_audit_log_masks_command_supplied_by_runner(self):
         with tempfile.TemporaryDirectory() as tmp:
             old_data = deploysys.DATA_DIR
@@ -220,7 +234,7 @@ class DeploySysTests(unittest.TestCase):
         rendered = deploysys.render_project_details(project)
         self.assertIn("Mall (mall)", rendered)
         self.assertIn("Front API (front-api)", rendered)
-        self.assertIn("命令:", rendered)
+        self.assertIn("执行:", rendered)
         self.assertIn("ENV_FILE=config/env.prod.example bash scripts/deploy-front-api.sh", rendered)
         self.assertNotIn("repo.mac", rendered)
         self.assertNotIn("mode=", rendered)

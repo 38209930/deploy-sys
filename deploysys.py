@@ -532,7 +532,7 @@ def render_service_lines(service: dict[str, Any]) -> list[str]:
 
 
 def action_label(action: str) -> str:
-    return "命令" if action == COMMAND_KEY else action
+    return "执行" if action == COMMAND_KEY else action
 
 
 def select_environment(project: dict[str, Any], default: str = "test") -> tuple[str, dict[str, Any]] | None:
@@ -826,9 +826,12 @@ def looks_like_secret(value: str) -> bool:
 
 def strong_confirm(project_id: str, env_name: str, action: str) -> bool:
     phrase = f"{project_id} {env_name} {action}"
-    typed = prompt_text(f"高风险操作，请输入确认词 `{phrase}`").strip()
-    if typed != phrase:
-        print("确认词不匹配，已取消。")
+    accepted_phrases = {phrase}
+    if action == "执行":
+        accepted_phrases.add(f"{project_id} {env_name} 命令")
+    typed = prompt_text(f"生产环境/高风险操作，请完整输入确认词 `{phrase}`，不能只输入 y").strip()
+    if typed not in accepted_phrases:
+        print(f"确认词不匹配，已取消。需要输入：{phrase}")
         return False
     return True
 
