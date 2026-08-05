@@ -53,7 +53,6 @@ class DeploySysGui(tk.Tk):
         deploysys.ensure_base_files()
         self.settings = deploysys.load_yaml(deploysys.SETTINGS_FILE, deploysys.DEFAULT_SETTINGS)
         self.projects = deploysys.load_projects()
-        self.config_signature = self.current_config_signature()
         self.output_queue: queue.Queue[str] = queue.Queue()
         self.running = False
         self.status_var = tk.StringVar(value="")
@@ -66,7 +65,6 @@ class DeploySysGui(tk.Tk):
         self.create_widgets()
         self.refresh_projects()
         self.after(100, self.drain_output)
-        self.after(2000, self.auto_reload_config)
 
     def create_widgets(self) -> None:
         toolbar = ttk.Frame(self)
@@ -130,14 +128,6 @@ class DeploySysGui(tk.Tk):
         listbox.bind("<<ListboxSelect>>", callback)
         return listbox
 
-    def current_config_signature(self) -> tuple[str, int, int] | None:
-        path = deploysys.active_projects_file()
-        try:
-            stat = path.stat()
-        except FileNotFoundError:
-            return None
-        return str(path), stat.st_mtime_ns, stat.st_size
-
     def selected_ids(self) -> tuple[str | None, str | None]:
         project = self.selected_project()
         service = self.selected_service()
@@ -146,23 +136,21 @@ class DeploySysGui(tk.Tk):
             str(service.get("id")) if service else None,
         )
 
-    def reload_config(self, silent: bool = False) -> None:
-        project_id, service_id = self.selected_ids()
+    def reload_config(
+        self,
+        silent: bool = False,
+        project_id: str | None = None,
+        service_id: str | None = None,
+    ) -> None:
+        if project_id is None and service_id is None:
+            project_id, service_id = self.selected_ids()
         self.settings = deploysys.load_yaml(deploysys.SETTINGS_FILE, deploysys.DEFAULT_SETTINGS)
         self.projects = deploysys.load_projects()
-        self.config_signature = self.current_config_signature()
         self.refresh_projects(project_id, service_id)
         message = f"已重新加载配置: {deploysys.active_projects_file()}"
         self.status_var.set(message)
         if not silent:
             self.append_log(message + "\n")
-
-    def auto_reload_config(self) -> None:
-        signature = self.current_config_signature()
-        if signature != self.config_signature:
-            self.reload_config(silent=True)
-            self.append_log(f"检测到配置变化，已自动重新加载: {deploysys.active_projects_file()}\n")
-        self.after(2000, self.auto_reload_config)
 
     def refresh_projects(self, project_id: str | None = None, service_id: str | None = None) -> None:
         self.project_items = self.projects.get("projects") or []
@@ -282,8 +270,7 @@ class DeploySysGui(tk.Tk):
         }
         self.projects.setdefault("projects", []).append(project)
         deploysys.save_projects(self.projects)
-        self.config_signature = self.current_config_signature()
-        self.refresh_projects(project_id)
+        self.reload_config(silent=True, project_id=project_id)
         if messagebox.askyesno("新增服务", "是否现在为该项目新增服务？"):
             self.add_service()
 
@@ -312,9 +299,7 @@ class DeploySysGui(tk.Tk):
         project.setdefault("services", []).append(service)
         self.add_target_to_service(service, save=False)
         deploysys.save_projects(self.projects)
-        self.projects = deploysys.load_projects()
-        self.config_signature = self.current_config_signature()
-        self.refresh_projects(project_id, service_id)
+        self.reload_config(silent=True, project_id=project_id, service_id=service_id)
         messagebox.showinfo("已保存", f"服务已保存到项目 {project.get('name')}：{service_name}")
         self.append_log(f"已保存服务: {project_id}/{service_id}\n")
 
@@ -327,9 +312,7 @@ class DeploySysGui(tk.Tk):
         project_id = str(project.get("id"))
         service_id = str(service.get("id"))
         if self.add_target_to_service(service, save=True):
-            self.projects = deploysys.load_projects()
-            self.config_signature = self.current_config_signature()
-            self.refresh_projects(project_id, service_id)
+            self.reload_config(silent=True, project_id=project_id, service_id=service_id)
             messagebox.showinfo("已保存", "执行目标已保存。")
 
     def add_target_to_service(self, service: dict[str, Any], save: bool) -> bool:
@@ -366,21 +349,22 @@ class DeploySysGui(tk.Tk):
                 if "targets" in service:
                     service["targets"].pop(target[0], None)
                 deploysys.save_projects(self.projects)
-                self.config_signature = self.current_config_signature()
-                self.on_service_selected()
+                project = self.selected_project()
+                project_id = str(project.get("id")) if project else None
+                service_id = str(service.get("id"))
+                self.reload_config(silent=True, project_id=project_id, service_id=service_id)
             return
         if service and project:
             if messagebox.askyesno("删除服务", f"删除服务 {service.get('name')}？"):
+                project_id = str(project.get("id"))
                 project["services"] = [item for item in project.get("services", []) if item.get("id") != service.get("id")]
                 deploysys.save_projects(self.projects)
-                self.config_signature = self.current_config_signature()
-                self.on_project_selected()
+                self.reload_config(silent=True, project_id=project_id)
             return
         if project and messagebox.askyesno("删除项目", f"删除项目 {project.get('name')}？"):
             self.projects["projects"] = [item for item in self.projects.get("projects", []) if item.get("id") != project.get("id")]
             deploysys.save_projects(self.projects)
-            self.config_signature = self.current_config_signature()
-            self.refresh_projects()
+            self.reload_config(silent=True)
 
     def execute_selected(self) -> None:
         project = self.selected_project()
@@ -410,7 +394,11 @@ class DeploySysGui(tk.Tk):
                 return
             target[1]["status_commands"] = commands
             deploysys.save_projects(self.projects)
-            self.config_signature = self.current_config_signature()
+            self.reload_config(silent=True, project_id=str(project.get("id")), service_id=str(service.get("id")))
+            service = self.selected_service()
+            target = self.selected_target()
+            if not service or not target:
+                return
         self.run_in_background(project, service, target[0], target[1], "状态检查", commands)
 
     def run_in_background(
