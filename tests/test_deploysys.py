@@ -41,14 +41,13 @@ class DeploySysTests(unittest.TestCase):
     def test_action_label_uses_execute_for_default_command(self):
         self.assertEqual(deploysys.action_label(deploysys.COMMAND_KEY), "执行")
 
-    def test_gui_output_buffer_coalesces_small_chunks(self):
+    def test_web_output_buffer_writes_to_session_queue(self):
         output_queue: queue.Queue[str] = queue.Queue()
-        buffer = deploysys_gui.GuiOutputBuffer(output_queue)
-        for _ in range(100):
-            buffer.write("x")
-        self.assertTrue(output_queue.empty())
-        buffer.write("\n")
-        self.assertEqual(output_queue.get_nowait(), "x" * 100 + "\n")
+        buffer = deploysys_gui.OutputBuffer({"queue": output_queue})
+        buffer.write("hello")
+        buffer.write(" world")
+        self.assertEqual(output_queue.get_nowait(), "hello")
+        self.assertEqual(output_queue.get_nowait(), " world")
         self.assertTrue(output_queue.empty())
 
     def test_strong_confirm_accepts_execute_phrase_and_legacy_command_phrase(self):
