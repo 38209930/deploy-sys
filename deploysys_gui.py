@@ -104,11 +104,7 @@ class ServiceEditor(tk.Toplevel):
         ttk.Label(form, text="服务名称").grid(row=1, column=0, sticky="w", pady=4)
         ttk.Entry(form, textvariable=self.service_name).grid(row=1, column=1, sticky="ew", pady=4)
         ttk.Label(form, text="服务类型").grid(row=2, column=0, sticky="w", pady=4)
-        ttk.Combobox(
-            form,
-            textvariable=self.service_type,
-            values=("other", "dotnet", "java", "vue3"),
-        ).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Entry(form, textvariable=self.service_type).grid(row=2, column=1, sticky="ew", pady=4)
         ttk.Label(form, text="执行目标").grid(row=3, column=0, sticky="w", pady=4)
         ttk.Entry(form, textvariable=self.target_name).grid(row=3, column=1, sticky="ew", pady=4)
 
@@ -248,14 +244,10 @@ class DeploySysGui(tk.Tk):
 
         top_right = ttk.Frame(right)
         top_right.pack(fill="x")
-        ttk.Label(top_right, text="执行目标").grid(row=0, column=0, sticky="w")
-        ttk.Label(top_right, text="动作").grid(row=0, column=1, sticky="w", padx=(12, 0))
-        self.target_box = ttk.Combobox(top_right, state="readonly", width=22)
-        self.target_box.grid(row=1, column=0, sticky="ew")
-        self.target_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh_actions())
-        self.action_box = ttk.Combobox(top_right, state="readonly", width=18)
-        self.action_box.grid(row=1, column=1, sticky="ew", padx=(12, 0))
-        self.action_box.bind("<<ComboboxSelected>>", lambda _event: self.refresh_command_preview())
+        target_panel, self.target_list = self.make_compact_list_panel(top_right, "执行目标", self.on_target_selected)
+        target_panel.grid(row=0, column=0, sticky="nsew")
+        action_panel, self.action_list = self.make_compact_list_panel(top_right, "动作", self.on_action_selected)
+        action_panel.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
         top_right.columnconfigure(0, weight=1)
         top_right.columnconfigure(1, weight=1)
 
@@ -281,6 +273,14 @@ class DeploySysGui(tk.Tk):
         listbox.pack(fill="both", expand=True, pady=(4, 0))
         listbox.bind("<<ListboxSelect>>", callback)
         return listbox
+
+    def make_compact_list_panel(self, parent: tk.Misc, title: str, callback: Any) -> tuple[ttk.Frame, tk.Listbox]:
+        frame = ttk.Frame(parent)
+        ttk.Label(frame, text=title).pack(anchor="w")
+        listbox = tk.Listbox(frame, exportselection=False, height=4)
+        listbox.pack(fill="both", expand=True, pady=(4, 0))
+        listbox.bind("<<ListboxSelect>>", callback)
+        return frame, listbox
 
     def selected_ids(self) -> tuple[str | None, str | None]:
         project = self.selected_project()
@@ -350,18 +350,30 @@ class DeploySysGui(tk.Tk):
         service = self.selected_service()
         targets = deploysys.service_targets(service) if service else {}
         self.target_items = [(name, targets[name]) for name in deploysys.ordered_target_names(service or {})]
-        self.target_box["values"] = [name for name, _cfg in self.target_items]
+        self.target_list.delete(0, tk.END)
+        for name, _cfg in self.target_items:
+            self.target_list.insert(tk.END, name)
         if self.target_items:
-            self.target_box.current(0)
+            self.target_list.selection_set(0)
+            self.target_list.see(0)
         self.refresh_actions()
+
+    def on_target_selected(self, _event: Any = None) -> None:
+        self.refresh_actions()
+
+    def on_action_selected(self, _event: Any = None) -> None:
+        self.refresh_command_preview()
 
     def refresh_actions(self) -> None:
         target = self.selected_target()
         commands = (target[1].get("commands") if target else {}) or {}
         self.action_items = deploysys.available_actions(commands)
-        self.action_box["values"] = [deploysys.action_label(action) for action in self.action_items]
+        self.action_list.delete(0, tk.END)
+        for action in self.action_items:
+            self.action_list.insert(tk.END, deploysys.action_label(action))
         if self.action_items:
-            self.action_box.current(0)
+            self.action_list.selection_set(0)
+            self.action_list.see(0)
         self.refresh_command_preview()
 
     def refresh_command_preview(self) -> None:
@@ -372,10 +384,8 @@ class DeploySysGui(tk.Tk):
     def clear_target_state(self) -> None:
         self.target_items = []
         self.action_items = []
-        self.target_box["values"] = []
-        self.action_box["values"] = []
-        self.target_box.set("")
-        self.action_box.set("")
+        self.target_list.delete(0, tk.END)
+        self.action_list.delete(0, tk.END)
         self.refresh_command_preview()
 
     def selected_project(self) -> dict[str, Any] | None:
@@ -387,11 +397,13 @@ class DeploySysGui(tk.Tk):
         return self.service_items[selection[0]] if selection else None
 
     def selected_target(self) -> tuple[str, dict[str, Any]] | None:
-        idx = self.target_box.current()
+        selection = self.target_list.curselection()
+        idx = selection[0] if selection else -1
         return self.target_items[idx] if 0 <= idx < len(self.target_items) else None
 
     def selected_action(self) -> str | None:
-        idx = self.action_box.current()
+        selection = self.action_list.curselection()
+        idx = selection[0] if selection else -1
         return self.action_items[idx] if 0 <= idx < len(self.action_items) else None
 
     def selected_commands(self) -> list[str]:
@@ -692,14 +704,18 @@ class DeploySysGui(tk.Tk):
     def select_target_by_name(self, target_name: str) -> None:
         for idx, (name, _cfg) in enumerate(self.target_items):
             if name == target_name:
-                self.target_box.current(idx)
+                self.target_list.selection_clear(0, tk.END)
+                self.target_list.selection_set(idx)
+                self.target_list.see(idx)
                 self.refresh_actions()
                 return
 
     def select_action_by_key(self, action: str) -> None:
         for idx, item in enumerate(self.action_items):
             if item == action:
-                self.action_box.current(idx)
+                self.action_list.selection_clear(0, tk.END)
+                self.action_list.selection_set(idx)
+                self.action_list.see(idx)
                 self.refresh_command_preview()
                 return
 
