@@ -43,6 +43,80 @@ class CommandEditor(tk.Toplevel):
         self.destroy()
 
 
+class ServiceEditor(tk.Toplevel):
+    def __init__(self, parent: tk.Misc) -> None:
+        super().__init__(parent)
+        self.title("新增服务")
+        self.result: dict[str, Any] | None = None
+        self.geometry("760x560")
+        self.transient(parent)
+        self.grab_set()
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=12, pady=(12, 4))
+        form.columnconfigure(1, weight=1)
+
+        self.service_id = tk.StringVar()
+        self.service_name = tk.StringVar()
+        self.service_type = tk.StringVar(value="other")
+        self.target_name = tk.StringVar(value=deploysys.DEFAULT_TARGET_NAME)
+
+        ttk.Label(form, text="服务 ID").grid(row=0, column=0, sticky="w", pady=4)
+        ttk.Entry(form, textvariable=self.service_id).grid(row=0, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text="服务名称").grid(row=1, column=0, sticky="w", pady=4)
+        ttk.Entry(form, textvariable=self.service_name).grid(row=1, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text="服务类型").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Combobox(
+            form,
+            textvariable=self.service_type,
+            values=("other", "dotnet", "java", "vue3"),
+        ).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(form, text="执行目标").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(form, textvariable=self.target_name).grid(row=3, column=1, sticky="ew", pady=4)
+
+        ttk.Label(self, text="执行命令，每行一条。").pack(anchor="w", padx=12, pady=(8, 4))
+        self.commands = ScrolledText(self, wrap="word", height=16)
+        self.commands.pack(fill="both", expand=True, padx=12, pady=4)
+
+        buttons = ttk.Frame(self)
+        buttons.pack(fill="x", padx=12, pady=(4, 12))
+        ttk.Button(buttons, text="保存", command=self.save).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="取消", command=self.destroy).pack(side="right")
+        self.service_id.trace_add("write", self.fill_name_from_id)
+        self.service_id_entry_focus()
+
+    def service_id_entry_focus(self) -> None:
+        for child in self.winfo_children():
+            if isinstance(child, ttk.Frame):
+                for nested in child.winfo_children():
+                    if isinstance(nested, ttk.Entry):
+                        nested.focus_set()
+                        return
+
+    def fill_name_from_id(self, *_args: Any) -> None:
+        if not self.service_name.get().strip():
+            self.service_name.set(self.service_id.get().strip())
+
+    def save(self) -> None:
+        service_id = self.service_id.get().strip()
+        target_name = self.target_name.get().strip()
+        if not service_id:
+            messagebox.showerror("缺少服务 ID", "请输入服务 ID。", parent=self)
+            return
+        if not target_name:
+            messagebox.showerror("缺少执行目标", "请输入执行目标。", parent=self)
+            return
+        commands = [line.rstrip() for line in self.commands.get("1.0", "end").splitlines() if line.strip()]
+        self.result = {
+            "id": service_id,
+            "name": self.service_name.get().strip() or service_id,
+            "type": self.service_type.get().strip() or "other",
+            "target_name": target_name,
+            "commands": commands,
+        }
+        self.destroy()
+
+
 class DeploySysGui(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -108,12 +182,12 @@ class DeploySysGui(tk.Tk):
         ttk.Label(right, text="命令预览").pack(anchor="w", pady=(12, 4))
         self.command_preview = ScrolledText(right, height=8, wrap="word")
         self.command_preview.pack(fill="x")
-        self.command_preview.configure(state="disabled")
 
         button_row = ttk.Frame(right)
         button_row.pack(fill="x", pady=8)
         self.execute_button = ttk.Button(button_row, text="执行", command=self.execute_selected)
         self.execute_button.pack(side="left")
+        ttk.Button(button_row, text="保存命令", command=self.save_selected_commands).pack(side="left", padx=(8, 0))
         ttk.Button(button_row, text="状态检查", command=self.execute_status).pack(side="left", padx=(8, 0))
         ttk.Button(button_row, text="清空日志", command=self.clear_log).pack(side="right")
 
@@ -212,10 +286,8 @@ class DeploySysGui(tk.Tk):
 
     def refresh_command_preview(self) -> None:
         commands = self.selected_commands()
-        self.command_preview.configure(state="normal")
         self.command_preview.delete("1.0", "end")
         self.command_preview.insert("1.0", "\n".join(commands))
-        self.command_preview.configure(state="disabled")
 
     def clear_target_state(self) -> None:
         self.target_items = []
@@ -249,6 +321,29 @@ class DeploySysGui(tk.Tk):
             return []
         return ((target[1].get("commands") or {}).get(action) or [])
 
+    def preview_command_lines(self) -> list[str]:
+        return [line.rstrip() for line in self.command_preview.get("1.0", "end").splitlines() if line.strip()]
+
+    def save_selected_commands(self) -> None:
+        project = self.selected_project()
+        service = self.selected_service()
+        target = self.selected_target()
+        action = self.selected_action() or deploysys.COMMAND_KEY
+        if not project or not service or not target:
+            messagebox.showinfo("不能保存", "请选择项目、服务和执行目标。")
+            return
+        commands = self.preview_command_lines()
+        target[1].setdefault("commands", {})[action] = commands
+        project_id = str(project.get("id"))
+        service_id = str(service.get("id"))
+        target_name = target[0]
+        deploysys.save_projects(self.projects)
+        self.reload_config(silent=True, project_id=project_id, service_id=service_id)
+        self.select_target_by_name(target_name)
+        self.select_action_by_key(action)
+        messagebox.showinfo("已保存", "命令已保存。")
+        self.append_log(f"已保存命令: {project_id}/{service_id} {target_name} {deploysys.action_label(action)}\n")
+
     def add_project(self) -> None:
         project_id = self.ask_required("新增项目", "项目 ID")
         if not project_id:
@@ -280,27 +375,31 @@ class DeploySysGui(tk.Tk):
             messagebox.showinfo("请选择项目", "请先选择一个项目。")
             return
         project_id = str(project.get("id"))
-        service_id = self.ask_required("新增服务", "服务 ID")
-        if not service_id:
+        dialog = ServiceEditor(self)
+        self.wait_window(dialog)
+        if not dialog.result:
             return
+        service_id = dialog.result["id"]
         if deploysys.find_service(project, service_id):
             messagebox.showerror("服务已存在", "该项目下已存在同 ID 服务。")
             return
-        service_name = self.ask_required("新增服务", "服务名称")
-        if not service_name:
-            return
-        service_type = simpledialog.askstring("新增服务", "服务类型", initialvalue="other", parent=self) or "other"
+        target_name = dialog.result["target_name"]
+        commands = dialog.result["commands"]
         service = {
             "id": service_id,
-            "name": service_name,
-            "type": service_type.strip() or "other",
-            "targets": {},
+            "name": dialog.result["name"],
+            "type": dialog.result["type"],
+            "targets": {
+                target_name: {
+                    "commands": {deploysys.COMMAND_KEY: commands} if commands else {},
+                }
+            },
         }
         project.setdefault("services", []).append(service)
-        self.add_target_to_service(service, save=False)
         deploysys.save_projects(self.projects)
         self.reload_config(silent=True, project_id=project_id, service_id=service_id)
-        messagebox.showinfo("已保存", f"服务已保存到项目 {project.get('name')}：{service_name}")
+        self.select_target_by_name(target_name)
+        messagebox.showinfo("已保存", f"服务已保存到项目 {project.get('name')}：{service['name']}")
         self.append_log(f"已保存服务: {project_id}/{service_id}\n")
 
     def add_target(self) -> None:
@@ -481,6 +580,20 @@ class DeploySysGui(tk.Tk):
                 self.service_list.selection_set(idx)
                 self.service_list.see(idx)
                 self.on_service_selected()
+                return
+
+    def select_target_by_name(self, target_name: str) -> None:
+        for idx, (name, _cfg) in enumerate(self.target_items):
+            if name == target_name:
+                self.target_box.current(idx)
+                self.refresh_actions()
+                return
+
+    def select_action_by_key(self, action: str) -> None:
+        for idx, item in enumerate(self.action_items):
+            if item == action:
+                self.action_box.current(idx)
+                self.refresh_command_preview()
                 return
 
 
