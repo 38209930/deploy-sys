@@ -1,16 +1,17 @@
 # deploy-sys
 
-`deploy-sys` 是一个轻量终端部署运维 CLI，用来把多个项目、多个子任务服务的常用命令集中保存，并通过菜单选择后执行。
+`deploy-sys` 是一个轻量部署运维工具，用来把多个项目、多个子任务服务的常用命令集中保存，并通过终端菜单或桌面客户端执行。
 
 它不接管 CI/CD，不维护服务器配置，也不要求你把部署流程拆成固定字段。你输入原始命令，工具负责保存、展示、执行和记录日志。
 
 ## Features
 
-- 项目、子任务、环境三层管理：`project -> service -> test/prod`
+- 项目、子任务、执行目标三层管理：`project -> service -> target`
 - 新增项目时自动识别 macOS / Windows，识别失败时可手动选择
-- 每个环境保存一组原始命令，支持粘贴多行命令
-- 状态检查命令按环境单独保存，首次使用时引导录入
-- 选中 `test/prod` 后直接执行已保存命令
+- 每个执行目标保存一组原始命令，支持粘贴多行命令
+- 执行目标名称可自定义，例如 `默认`、`test`、`prod`、`local`
+- 状态检查命令按执行目标单独保存，首次使用时引导录入
+- 桌面客户端支持点击项目、服务、执行目标后直接执行
 - 执行日志本地保存，并对疑似敏感值做脱敏
 - 可查看项目配置和配置文件路径
 - 可删除项目、子任务或环境下保存的命令
@@ -25,8 +26,22 @@ pip install -r requirements.txt
 
 ## Usage
 
+终端版：
+
 ```bash
 python3 deploysys.py
+```
+
+mac 桌面版：
+
+```bash
+python3 deploysys_gui.py
+```
+
+mac 也可以直接双击：
+
+```text
+deploysys_gui.command
 ```
 
 首次启动会自动生成：
@@ -58,8 +73,8 @@ python3 deploysys.py
 - 项目：例如 `demo-platform`
 - 运行系统：`mac` 或 `windows`，新增项目时自动识别当前系统
 - 子任务服务：例如 `front-api`、`back-api`、`web-admin`
-- 环境：固定为 `test` 和 `prod`
-- 命令：每个环境保存一组多行原始命令
+- 执行目标：例如 `默认`、`test`、`prod`，名称可自定义
+- 命令：每个执行目标保存一组多行原始命令
 
 系统不会要求你输入 `local/ssh`、`host`、`workdir`、端口、Health URL、密钥名，也不会要求你把命令拆成 `build/deploy/start/stop`。命令怎么执行，由你粘贴的原始命令决定。
 
@@ -77,7 +92,7 @@ projects:
       - id: front-api
         name: Front API
         type: dotnet
-        environments:
+        targets:
           test:
             commands:
               run:
@@ -116,5 +131,5 @@ projects:
 
 ```bash
 python3 -m unittest discover -s tests
-python3 -m py_compile deploysys.py tests/test_deploysys.py
+python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 ```

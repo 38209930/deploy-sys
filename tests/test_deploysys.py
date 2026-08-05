@@ -206,6 +206,15 @@ class DeploySysTests(unittest.TestCase):
         services = deploysys.project_services(project)
         self.assertEqual([item["id"] for item in services], ["front-api", "back-api"])
 
+    def test_service_targets_prefers_custom_targets_and_supports_legacy_environments(self):
+        service = {
+            "targets": {"默认": {"commands": {"run": ["echo default"]}}},
+            "environments": {"test": {"commands": {"run": ["echo test"]}}},
+        }
+        self.assertEqual(list(deploysys.service_targets(service)), ["默认"])
+        legacy_service = {"environments": {"test": {}, "prod": {}}}
+        self.assertEqual(deploysys.ordered_target_names(legacy_service), ["test", "prod"])
+
     def test_find_project_and_service(self):
         projects = {
             "projects": [
@@ -412,6 +421,7 @@ class DeploySysTests(unittest.TestCase):
                         "Back API",
                         "",
                         "y",
+                        "test,prod",
                         "echo test",
                         "",
                         "echo prod",
@@ -424,7 +434,7 @@ class DeploySysTests(unittest.TestCase):
                 services = saved["projects"][0]["services"]
                 self.assertEqual([item["id"] for item in services], ["front-api", "back-api"])
                 self.assertEqual(
-                    services[1]["environments"]["prod"]["commands"]["run"],
+                    services[1]["targets"]["prod"]["commands"]["run"],
                     ["echo prod"],
                 )
             finally:

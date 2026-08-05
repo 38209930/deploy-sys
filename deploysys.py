@@ -17,7 +17,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import yaml
 from cryptography.fernet import Fernet, InvalidToken
@@ -69,6 +69,7 @@ ACTION_ORDER = (COMMAND_KEY, "build", "deploy", "start", "stop", "restart", "log
 PLATFORM_MAC = "mac"
 PLATFORM_WINDOWS = "windows"
 COMMAND_IDLE_TIMEOUT_EXIT_CODE = 124
+DEFAULT_TARGET_NAME = "默认"
 
 
 @dataclass
@@ -278,18 +279,18 @@ def collect_service_config(project: dict[str, Any]) -> dict[str, Any] | None:
     service_id, service_name, service_type = collect_service_identity(project)
     if not service_id:
         return None
-    envs: dict[str, Any] = {}
-    for env_name in ("test", "prod"):
-        print(f"\n配置 {service_name} 的 {env_name} 环境")
-        commands = ask_environment_commands(env_name)
-        envs[env_name] = {
+    targets: dict[str, Any] = {}
+    for target_name in ask_target_names():
+        print(f"\n配置 {service_name} 的 {target_name} 执行目标")
+        commands = ask_environment_commands(target_name)
+        targets[target_name] = {
             "commands": commands,
         }
     return {
         "id": service_id,
         "name": service_name,
         "type": service_type,
-        "environments": envs,
+        "targets": targets,
     }
 
 
@@ -367,8 +368,18 @@ def ask_project_platform() -> str:
 
 
 def ask_environment_commands(env_name: str) -> dict[str, list[str]]:
-    commands = ask_command_lines(f"{env_name} 环境命令")
+    commands = ask_command_lines(f"{env_name} 执行目标命令")
     return {COMMAND_KEY: commands} if commands else {}
+
+
+def ask_target_names() -> list[str]:
+    raw = prompt_text("执行目标名称，多个用逗号分隔，默认 默认", DEFAULT_TARGET_NAME).strip()
+    names = [item.strip() for item in raw.split(",") if item.strip()]
+    unique_names: list[str] = []
+    for name in names or [DEFAULT_TARGET_NAME]:
+        if name not in unique_names:
+            unique_names.append(name)
+    return unique_names
 
 
 def ask_command_lines(label: str = "命令") -> list[str]:
@@ -395,6 +406,29 @@ def find_service(project: dict[str, Any], service_id: str) -> dict[str, Any] | N
         if service.get("id") == service_id:
             return service
     return None
+
+
+def service_targets(service: dict[str, Any]) -> dict[str, Any]:
+    targets = service.get("targets")
+    if isinstance(targets, dict) and targets:
+        return targets
+    environments = service.get("environments")
+    if isinstance(environments, dict):
+        return environments
+    return {}
+
+
+def ordered_target_names(service: dict[str, Any]) -> list[str]:
+    targets = service_targets(service)
+    names = list(targets)
+    ordered: list[str] = []
+    for preferred in (DEFAULT_TARGET_NAME, "test", "prod"):
+        if preferred in targets:
+            ordered.append(preferred)
+    for name in names:
+        if name not in ordered:
+            ordered.append(name)
+    return ordered
 
 
 def select_project(projects: dict[str, Any]) -> dict[str, Any] | None:
@@ -449,7 +483,7 @@ def select_service(project: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def select_action(commands: dict[str, list[str]]) -> str | None:
-    actions = [action for action in ACTION_ORDER if commands.get(action)]
+    actions = available_actions(commands)
     if not actions:
         print("当前环境没有可删除的命令。")
         return None
@@ -462,6 +496,14 @@ def select_action(commands: dict[str, list[str]]) -> str | None:
         print("无效动作。")
         return None
     return actions[int(choice) - 1]
+
+
+def available_actions(commands: dict[str, list[str]]) -> list[str]:
+    actions = [action for action in ACTION_ORDER if commands.get(action)]
+    for action, action_commands in commands.items():
+        if action not in actions and action_commands:
+            actions.append(action)
+    return actions
 
 
 def project_services(project: dict[str, Any]) -> list[dict[str, Any]]:
@@ -507,8 +549,9 @@ def render_service_lines(service: dict[str, Any]) -> list[str]:
     lines = [
         f"- {service.get('name')} ({service.get('id')}) [{service.get('type', 'other')}]",
     ]
-    for env_name in ("test", "prod"):
-        env_cfg = (service.get("environments") or {}).get(env_name)
+    targets = service_targets(service)
+    for env_name in ordered_target_names(service):
+        env_cfg = targets.get(env_name)
         if not env_cfg:
             continue
         lines.append(f"  {env_name}:")
@@ -521,7 +564,7 @@ def render_service_lines(service: dict[str, Any]) -> list[str]:
         if not commands:
             lines.append("    commands=-")
             continue
-        for action in ACTION_ORDER:
+        for action in available_actions(commands):
             action_commands = commands.get(action) or []
             if action_commands:
                 lines.append(f"    {action_label(action)}:")
@@ -535,15 +578,15 @@ def action_label(action: str) -> str:
 
 
 def select_environment(project: dict[str, Any], default: str = "test") -> tuple[str, dict[str, Any]] | None:
-    envs = project.get("environments") or {}
-    available = [env for env in ("test", "prod") if env in envs]
+    envs = service_targets(project)
+    available = ordered_target_names(project)
     if not available:
-        print("项目未配置 test/prod 环境。")
+        print("项目未配置执行目标。")
         return None
     for idx, env in enumerate(available, 1):
         mark = "默认" if env == default else ""
         print(f"{idx}. {env} {mark}")
-    choice = prompt_text("请选择环境").strip()
+    choice = prompt_text("请选择执行目标").strip()
     if not choice:
         choice = str(available.index(default) + 1) if default in available else "1"
     if not choice.isdigit() or not 1 <= int(choice) <= len(available):
@@ -565,7 +608,7 @@ def project_flow(settings: dict[str, Any], projects: dict[str, Any]) -> None:
         return
     env_name, env_cfg = selected
     commands = env_cfg.get("commands") or {}
-    actions = [a for a in ACTION_ORDER if commands.get(a)]
+    actions = available_actions(commands)
     if not actions:
         print("该环境没有可执行命令。")
         return
@@ -597,17 +640,42 @@ def execute_action(
         if not strong_confirm(f"{project['id']}/{service['id']}", env_name, confirm_action):
             return
 
-    runner = CommandRunner(settings, {})
-    results = []
+    run_action_commands(project, service, env_name, env_cfg, confirm_action, commands, settings)
+
+
+def emit_text(output_callback: Callable[[str], None] | None, text: str) -> None:
+    if output_callback:
+        output_callback(text)
+    else:
+        print(text, end="", flush=True)
+
+
+def emit_line(output_callback: Callable[[str], None] | None, text: str) -> None:
+    emit_text(output_callback, f"{text}\n")
+
+
+def run_action_commands(
+    project: dict[str, Any],
+    service: dict[str, Any],
+    target_name: str,
+    target_cfg: dict[str, Any],
+    action: str,
+    commands: list[str],
+    settings: dict[str, Any],
+    output_callback: Callable[[str], None] | None = None,
+) -> tuple[list[CommandResult], Path]:
+    runner = CommandRunner(settings, {}, output_callback)
+    results: list[CommandResult] = []
     for command in commands:
-        result = runner.run(command, project, service, env_name, env_cfg, confirm_action)
+        result = runner.run(command, project, service, target_name, target_cfg, action)
         results.append(result)
-        print(f"退出码: {result.exit_code}")
+        emit_line(output_callback, f"退出码: {result.exit_code}")
         if result.exit_code != 0 and settings.get("safety", {}).get("stop_on_command_failure", True):
-            print("命令失败，已停止后续步骤。")
+            emit_line(output_callback, "命令失败，已停止后续步骤。")
             break
-    write_audit_log(project, service, env_name, env_cfg, confirm_action, results, runner.log_path)
-    print(f"日志: {runner.log_path}")
+    write_audit_log(project, service, target_name, target_cfg, action, results, runner.log_path)
+    emit_line(output_callback, f"日志: {runner.log_path}")
+    return results, runner.log_path
 
 
 def command_idle_timeout_seconds(settings: dict[str, Any]) -> int:
@@ -663,9 +731,15 @@ def enqueue_process_output(proc: subprocess.Popen[str], output_queue: queue.Queu
 
 
 class CommandRunner:
-    def __init__(self, settings: dict[str, Any], secrets: dict[str, str]) -> None:
+    def __init__(
+        self,
+        settings: dict[str, Any],
+        secrets: dict[str, str],
+        output_callback: Callable[[str], None] | None = None,
+    ) -> None:
         self.settings = settings
         self.secrets = secrets
+        self.output_callback = output_callback
         today = dt.datetime.now().strftime("%Y-%m-%d")
         log_dir = LOGS_DIR / today
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -681,7 +755,7 @@ class CommandRunner:
         action: str,
     ) -> CommandResult:
         masked_command = mask_text(command, self.secrets.values())
-        print(f"执行: {masked_command}")
+        emit_line(self.output_callback, f"执行: {masked_command}")
         start = dt.datetime.now()
         env = os.environ.copy()
         env.update(self.secrets)
@@ -723,7 +797,7 @@ class CommandRunner:
                             "execution.command_idle_timeout_seconds，设为 0 可关闭。\n"
                         )
                         output_chunks.append(timeout_message)
-                        print(timeout_message, end="", flush=True)
+                        emit_text(self.output_callback, timeout_message)
                         fh.write(timeout_message)
                         fh.flush()
                         timed_out = True
@@ -737,7 +811,7 @@ class CommandRunner:
                 last_output_at = dt.datetime.now()
                 output_chunks.append(chunk)
                 masked_chunk = mask_text(chunk, self.secrets.values())
-                print(masked_chunk, end="", flush=True)
+                emit_text(self.output_callback, masked_chunk)
                 fh.write(masked_chunk)
                 fh.flush()
             if proc.stdout:
@@ -755,7 +829,7 @@ class CommandRunner:
                 cleaned_paths = cleanup_temp_publish_dirs(raw_output)
                 for cleaned_path in cleaned_paths:
                     fh.write(f"cleanup_temp_dir={cleaned_path}\n")
-                    print(f"已清理本地临时发布目录: {cleaned_path}")
+                    emit_line(self.output_callback, f"已清理本地临时发布目录: {cleaned_path}")
         return CommandResult(masked_command, exit_code, output)
 
     def append_log(
@@ -1061,11 +1135,11 @@ def status_flow(settings: dict[str, Any], projects: dict[str, Any]) -> None:
     if not selected:
         return
     env_name, env_cfg = selected
-    print(f"项目: {project.get('name')} 服务: {service.get('name')} 环境: {env_name}")
+    print(f"项目: {project.get('name')} 服务: {service.get('name')} 执行目标: {env_name}")
     status_commands = env_cfg.get("status_commands") or []
     if not status_commands:
         print("当前环境还没有状态检查命令。")
-        status_commands = ask_command_lines(f"{env_name} 环境状态检查命令")
+        status_commands = ask_command_lines(f"{env_name} 执行目标状态检查命令")
         if not status_commands:
             print("未录入状态检查命令。")
             return
@@ -1098,7 +1172,7 @@ def execute_status_commands(
 
 def derive_repo_from_commands(env_cfg: dict[str, Any]) -> str:
     commands = env_cfg.get("commands") or {}
-    for action in ACTION_ORDER:
+    for action in available_actions(commands):
         for command in commands.get(action) or []:
             repo = extract_repo_from_command(command)
             if repo:
@@ -1165,7 +1239,7 @@ def delete_action_commands_flow(projects: dict[str, Any]) -> None:
         return
     commands.pop(action, None)
     save_projects(projects)
-    print(f"已删除 {service.get('name')} {env_name} 环境下的 {action} 命令。")
+    print(f"已删除 {service.get('name')} {env_name} 执行目标下的 {action} 命令。")
 
 
 if __name__ == "__main__":
