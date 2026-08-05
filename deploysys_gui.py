@@ -16,6 +16,9 @@ from typing import Any
 import deploysys
 
 
+MAX_LOG_LINES = 5000
+
+
 class CommandEditor(tk.Toplevel):
     def __init__(self, parent: tk.Misc, title: str, initial: list[str] | None = None) -> None:
         super().__init__(parent)
@@ -25,7 +28,7 @@ class CommandEditor(tk.Toplevel):
         self.transient(parent)
         self.grab_set()
 
-        ttk.Label(self, text="每行一条命令，执行时按顺序运行。").pack(anchor="w", padx=12, pady=(12, 4))
+        ttk.Label(self, text="可直接粘贴多行命令，执行时按顺序运行。").pack(anchor="w", padx=12, pady=(12, 4))
         self.text = ScrolledText(self, wrap="word", height=16)
         self.text.pack(fill="both", expand=True, padx=12, pady=8)
         if initial:
@@ -74,7 +77,7 @@ class ServiceEditor(tk.Toplevel):
         ttk.Label(form, text="执行目标").grid(row=3, column=0, sticky="w", pady=4)
         ttk.Entry(form, textvariable=self.target_name).grid(row=3, column=1, sticky="ew", pady=4)
 
-        ttk.Label(self, text="执行命令，每行一条。").pack(anchor="w", padx=12, pady=(8, 4))
+        ttk.Label(self, text="执行命令，可直接粘贴多行。").pack(anchor="w", padx=12, pady=(8, 4))
         self.commands = ScrolledText(self, wrap="word", height=16)
         self.commands.pack(fill="both", expand=True, padx=12, pady=4)
 
@@ -111,6 +114,47 @@ class ServiceEditor(tk.Toplevel):
             "id": service_id,
             "name": self.service_name.get().strip() or service_id,
             "type": self.service_type.get().strip() or "other",
+            "target_name": target_name,
+            "commands": commands,
+        }
+        self.destroy()
+
+
+class TargetEditor(tk.Toplevel):
+    def __init__(self, parent: tk.Misc, title: str = "新增执行目标") -> None:
+        super().__init__(parent)
+        self.title(title)
+        self.result: dict[str, Any] | None = None
+        self.geometry("760x500")
+        self.transient(parent)
+        self.grab_set()
+
+        form = ttk.Frame(self)
+        form.pack(fill="x", padx=12, pady=(12, 4))
+        form.columnconfigure(1, weight=1)
+
+        self.target_name = tk.StringVar(value=deploysys.DEFAULT_TARGET_NAME)
+        ttk.Label(form, text="执行目标").grid(row=0, column=0, sticky="w", pady=4)
+        target_entry = ttk.Entry(form, textvariable=self.target_name)
+        target_entry.grid(row=0, column=1, sticky="ew", pady=4)
+
+        ttk.Label(self, text="执行命令，可直接粘贴多行。").pack(anchor="w", padx=12, pady=(8, 4))
+        self.commands = ScrolledText(self, wrap="word", height=16)
+        self.commands.pack(fill="both", expand=True, padx=12, pady=4)
+
+        buttons = ttk.Frame(self)
+        buttons.pack(fill="x", padx=12, pady=(4, 12))
+        ttk.Button(buttons, text="保存", command=self.save).pack(side="right", padx=(8, 0))
+        ttk.Button(buttons, text="取消", command=self.destroy).pack(side="right")
+        target_entry.focus_set()
+
+    def save(self) -> None:
+        target_name = self.target_name.get().strip()
+        if not target_name:
+            messagebox.showerror("缺少执行目标", "请输入执行目标。", parent=self)
+            return
+        commands = [line.rstrip() for line in self.commands.get("1.0", "end").splitlines() if line.strip()]
+        self.result = {
             "target_name": target_name,
             "commands": commands,
         }
@@ -410,23 +454,27 @@ class DeploySysGui(tk.Tk):
             return
         project_id = str(project.get("id"))
         service_id = str(service.get("id"))
-        if self.add_target_to_service(service, save=True):
+        target_name = self.add_target_to_service(service, save=True)
+        if target_name:
             self.reload_config(silent=True, project_id=project_id, service_id=service_id)
+            self.select_target_by_name(target_name)
             messagebox.showinfo("已保存", "执行目标已保存。")
 
-    def add_target_to_service(self, service: dict[str, Any], save: bool) -> bool:
-        name = self.ask_required("新增执行目标", "执行目标名称，例如 默认 / test / prod / local")
-        if not name:
-            return False
+    def add_target_to_service(self, service: dict[str, Any], save: bool) -> str | None:
+        dialog = TargetEditor(self, f"{service.get('name')} - 新增执行目标")
+        self.wait_window(dialog)
+        if not dialog.result:
+            return None
+        name = dialog.result["target_name"]
         targets = service.setdefault("targets", {})
         if name in targets:
             messagebox.showerror("执行目标已存在", "该服务下已存在同名执行目标。")
-            return False
-        commands = self.ask_commands(f"{service.get('name')} - {name} 执行命令")
+            return None
+        commands = dialog.result["commands"]
         targets[name] = {"commands": {deploysys.COMMAND_KEY: commands} if commands else {}}
         if save:
             deploysys.save_projects(self.projects)
-        return True
+        return name
 
     def ask_required(self, title: str, prompt: str) -> str | None:
         value = simpledialog.askstring(title, prompt, parent=self)
@@ -536,20 +584,36 @@ class DeploySysGui(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def drain_output(self) -> None:
-        while True:
+        chunks: list[str] = []
+        done = False
+        processed = 0
+        total_chars = 0
+        while processed < 1000 and total_chars < 50000:
             try:
                 item = self.output_queue.get_nowait()
             except queue.Empty:
                 break
             if item == "__DEPLOYSYS_GUI_DONE__":
-                self.running = False
-                self.execute_button.configure(state="normal")
+                done = True
+                processed += 1
                 continue
-            self.append_log(item)
-        self.after(100, self.drain_output)
+            chunks.append(item)
+            processed += 1
+            total_chars += len(item)
+        if chunks:
+            self.append_log("".join(chunks))
+        if done:
+            self.running = False
+            self.execute_button.configure(state="normal")
+        delay = 10 if not self.output_queue.empty() else 100
+        self.after(delay, self.drain_output)
 
     def append_log(self, text: str) -> None:
         self.log_text.insert("end", text)
+        end_line = int(float(self.log_text.index("end-1c")))
+        if end_line > MAX_LOG_LINES:
+            extra_lines = end_line - MAX_LOG_LINES
+            self.log_text.delete("1.0", f"{extra_lines + 1}.0")
         self.log_text.see("end")
 
     def clear_log(self) -> None:
