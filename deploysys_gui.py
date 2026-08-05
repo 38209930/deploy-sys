@@ -8,6 +8,7 @@ import platform
 import queue
 import subprocess
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from tkinter.scrolledtext import ScrolledText
@@ -16,7 +17,41 @@ from typing import Any
 import deploysys
 
 
-MAX_LOG_LINES = 5000
+MAX_LOG_LINES = 3000
+LOG_FLUSH_CHARS = 8192
+LOG_FLUSH_SECONDS = 0.1
+LOG_TRIM_SECONDS = 1.0
+
+
+class GuiOutputBuffer:
+    def __init__(self, output_queue: queue.Queue[str]) -> None:
+        self.output_queue = output_queue
+        self.lock = threading.Lock()
+        self.chunks: list[str] = []
+        self.char_count = 0
+        self.last_flush_at = time.monotonic()
+
+    def write(self, text: str) -> None:
+        if not text:
+            return
+        with self.lock:
+            self.chunks.append(text)
+            self.char_count += len(text)
+            now = time.monotonic()
+            if "\n" in text or self.char_count >= LOG_FLUSH_CHARS or now - self.last_flush_at >= LOG_FLUSH_SECONDS:
+                self.flush_locked(now)
+
+    def flush(self) -> None:
+        with self.lock:
+            self.flush_locked(time.monotonic())
+
+    def flush_locked(self, now: float) -> None:
+        if not self.chunks:
+            return
+        self.output_queue.put("".join(self.chunks))
+        self.chunks.clear()
+        self.char_count = 0
+        self.last_flush_at = now
 
 
 class CommandEditor(tk.Toplevel):
@@ -173,6 +208,7 @@ class DeploySysGui(tk.Tk):
         self.projects = deploysys.load_projects()
         self.output_queue: queue.Queue[str] = queue.Queue()
         self.running = False
+        self.last_log_trim_at = 0.0
         self.status_var = tk.StringVar(value="")
 
         self.project_items: list[dict[str, Any]] = []
@@ -563,6 +599,7 @@ class DeploySysGui(tk.Tk):
         self.running = True
         self.execute_button.configure(state="disabled")
         self.append_log(f"\n==== {project.get('id')}/{service.get('id')} {target_name} {action} ====\n")
+        output_buffer = GuiOutputBuffer(self.output_queue)
 
         def worker() -> None:
             try:
@@ -574,11 +611,12 @@ class DeploySysGui(tk.Tk):
                     action,
                     commands,
                     self.settings,
-                    self.output_queue.put,
+                    output_buffer.write,
                 )
             except Exception as exc:  # noqa: BLE001
-                self.output_queue.put(f"\n错误: {exc}\n")
+                output_buffer.write(f"\n错误: {exc}\n")
             finally:
+                output_buffer.flush()
                 self.output_queue.put("__DEPLOYSYS_GUI_DONE__")
 
         threading.Thread(target=worker, daemon=True).start()
@@ -588,7 +626,7 @@ class DeploySysGui(tk.Tk):
         done = False
         processed = 0
         total_chars = 0
-        while processed < 1000 and total_chars < 50000:
+        while processed < 100 and total_chars < 20000:
             try:
                 item = self.output_queue.get_nowait()
             except queue.Empty:
@@ -605,11 +643,16 @@ class DeploySysGui(tk.Tk):
         if done:
             self.running = False
             self.execute_button.configure(state="normal")
-        delay = 10 if not self.output_queue.empty() else 100
+        delay = 50 if not self.output_queue.empty() else 100
         self.after(delay, self.drain_output)
 
     def append_log(self, text: str) -> None:
         self.log_text.insert("end", text)
+        now = time.monotonic()
+        if now - self.last_log_trim_at < LOG_TRIM_SECONDS:
+            self.log_text.see("end")
+            return
+        self.last_log_trim_at = now
         end_line = int(float(self.log_text.index("end-1c")))
         if end_line > MAX_LOG_LINES:
             extra_lines = end_line - MAX_LOG_LINES
