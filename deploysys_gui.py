@@ -234,6 +234,7 @@ class DeploySysGui(tk.Tk):
         if not project:
             messagebox.showinfo("请选择项目", "请先选择一个项目。")
             return
+        project_id = str(project.get("id"))
         service_id = self.ask_required("新增服务", "服务 ID")
         if not service_id:
             return
@@ -253,29 +254,41 @@ class DeploySysGui(tk.Tk):
         project.setdefault("services", []).append(service)
         self.add_target_to_service(service, save=False)
         deploysys.save_projects(self.projects)
-        self.on_project_selected()
+        self.projects = deploysys.load_projects()
+        self.refresh_projects()
+        self.select_project_by_id(project_id)
         self.select_service_by_id(service_id)
+        messagebox.showinfo("已保存", f"服务已保存到项目 {project.get('name')}：{service_name}")
+        self.append_log(f"已保存服务: {project_id}/{service_id}\n")
 
     def add_target(self) -> None:
+        project = self.selected_project()
         service = self.selected_service()
-        if not service:
+        if not project or not service:
             messagebox.showinfo("请选择服务", "请先选择一个服务。")
             return
-        self.add_target_to_service(service, save=True)
-        self.on_service_selected()
+        project_id = str(project.get("id"))
+        service_id = str(service.get("id"))
+        if self.add_target_to_service(service, save=True):
+            self.projects = deploysys.load_projects()
+            self.refresh_projects()
+            self.select_project_by_id(project_id)
+            self.select_service_by_id(service_id)
+            messagebox.showinfo("已保存", "执行目标已保存。")
 
-    def add_target_to_service(self, service: dict[str, Any], save: bool) -> None:
+    def add_target_to_service(self, service: dict[str, Any], save: bool) -> bool:
         name = self.ask_required("新增执行目标", "执行目标名称，例如 默认 / test / prod / local")
         if not name:
-            return
+            return False
         targets = service.setdefault("targets", {})
         if name in targets:
             messagebox.showerror("执行目标已存在", "该服务下已存在同名执行目标。")
-            return
+            return False
         commands = self.ask_commands(f"{service.get('name')} - {name} 执行命令")
         targets[name] = {"commands": {deploysys.COMMAND_KEY: commands} if commands else {}}
         if save:
             deploysys.save_projects(self.projects)
+        return True
 
     def ask_required(self, title: str, prompt: str) -> str | None:
         value = simpledialog.askstring(title, prompt, parent=self)
