@@ -53,8 +53,10 @@ class DeploySysGui(tk.Tk):
         deploysys.ensure_base_files()
         self.settings = deploysys.load_yaml(deploysys.SETTINGS_FILE, deploysys.DEFAULT_SETTINGS)
         self.projects = deploysys.load_projects()
+        self.config_signature = self.current_config_signature()
         self.output_queue: queue.Queue[str] = queue.Queue()
         self.running = False
+        self.status_var = tk.StringVar(value="")
 
         self.project_items: list[dict[str, Any]] = []
         self.service_items: list[dict[str, Any]] = []
@@ -64,16 +66,20 @@ class DeploySysGui(tk.Tk):
         self.create_widgets()
         self.refresh_projects()
         self.after(100, self.drain_output)
+        self.after(2000, self.auto_reload_config)
 
     def create_widgets(self) -> None:
         toolbar = ttk.Frame(self)
         toolbar.pack(fill="x", padx=10, pady=8)
-        ttk.Button(toolbar, text="刷新", command=self.reload_config).pack(side="left")
+        ttk.Button(toolbar, text="重新加载配置", command=self.reload_config).pack(side="left")
         ttk.Button(toolbar, text="新增项目", command=self.add_project).pack(side="left", padx=(8, 0))
         ttk.Button(toolbar, text="新增服务", command=self.add_service).pack(side="left", padx=(8, 0))
         ttk.Button(toolbar, text="新增执行目标", command=self.add_target).pack(side="left", padx=(8, 0))
         ttk.Button(toolbar, text="删除所选", command=self.delete_selected).pack(side="left", padx=(8, 0))
         ttk.Button(toolbar, text="打开配置文件", command=self.open_config_file).pack(side="right")
+
+        status = ttk.Label(self, textvariable=self.status_var, anchor="w")
+        status.pack(fill="x", padx=10, pady=(0, 6))
 
         main = ttk.PanedWindow(self, orient="horizontal")
         main.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -124,27 +130,79 @@ class DeploySysGui(tk.Tk):
         listbox.bind("<<ListboxSelect>>", callback)
         return listbox
 
-    def reload_config(self) -> None:
+    def current_config_signature(self) -> tuple[str, int, int] | None:
+        path = deploysys.active_projects_file()
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            return None
+        return str(path), stat.st_mtime_ns, stat.st_size
+
+    def selected_ids(self) -> tuple[str | None, str | None]:
+        project = self.selected_project()
+        service = self.selected_service()
+        return (
+            str(project.get("id")) if project else None,
+            str(service.get("id")) if service else None,
+        )
+
+    def reload_config(self, silent: bool = False) -> None:
+        project_id, service_id = self.selected_ids()
         self.settings = deploysys.load_yaml(deploysys.SETTINGS_FILE, deploysys.DEFAULT_SETTINGS)
         self.projects = deploysys.load_projects()
-        self.refresh_projects()
-        self.append_log(f"已重新加载配置: {deploysys.active_projects_file()}\n")
+        self.config_signature = self.current_config_signature()
+        self.refresh_projects(project_id, service_id)
+        message = f"已重新加载配置: {deploysys.active_projects_file()}"
+        self.status_var.set(message)
+        if not silent:
+            self.append_log(message + "\n")
 
-    def refresh_projects(self) -> None:
+    def auto_reload_config(self) -> None:
+        signature = self.current_config_signature()
+        if signature != self.config_signature:
+            self.reload_config(silent=True)
+            self.append_log(f"检测到配置变化，已自动重新加载: {deploysys.active_projects_file()}\n")
+        self.after(2000, self.auto_reload_config)
+
+    def refresh_projects(self, project_id: str | None = None, service_id: str | None = None) -> None:
         self.project_items = self.projects.get("projects") or []
         self.project_list.delete(0, tk.END)
         for project in self.project_items:
             self.project_list.insert(tk.END, f"{project.get('name')} ({project.get('id')})")
         self.service_list.delete(0, tk.END)
         self.clear_target_state()
+        if not self.project_items:
+            self.status_var.set(f"未加载到项目配置: {deploysys.active_projects_file()}")
+            return
+        selected_index = 0
+        if project_id:
+            for idx, project in enumerate(self.project_items):
+                if project.get("id") == project_id:
+                    selected_index = idx
+                    break
+        self.project_list.selection_set(selected_index)
+        self.project_list.see(selected_index)
+        self.on_project_selected(service_id=service_id)
+        self.status_var.set(f"已加载 {len(self.project_items)} 个项目: {deploysys.active_projects_file()}")
 
-    def on_project_selected(self, _event: Any = None) -> None:
+    def on_project_selected(self, _event: Any = None, service_id: str | None = None) -> None:
         project = self.selected_project()
         self.service_items = deploysys.project_services(project) if project else []
         self.service_list.delete(0, tk.END)
         for service in self.service_items:
             self.service_list.insert(tk.END, f"{service.get('name')} ({service.get('id')})")
         self.clear_target_state()
+        if not self.service_items:
+            return
+        selected_index = 0
+        if service_id:
+            for idx, service in enumerate(self.service_items):
+                if service.get("id") == service_id:
+                    selected_index = idx
+                    break
+        self.service_list.selection_set(selected_index)
+        self.service_list.see(selected_index)
+        self.on_service_selected()
 
     def on_service_selected(self, _event: Any = None) -> None:
         service = self.selected_service()
@@ -224,8 +282,8 @@ class DeploySysGui(tk.Tk):
         }
         self.projects.setdefault("projects", []).append(project)
         deploysys.save_projects(self.projects)
-        self.refresh_projects()
-        self.select_project_by_id(project_id)
+        self.config_signature = self.current_config_signature()
+        self.refresh_projects(project_id)
         if messagebox.askyesno("新增服务", "是否现在为该项目新增服务？"):
             self.add_service()
 
@@ -255,9 +313,8 @@ class DeploySysGui(tk.Tk):
         self.add_target_to_service(service, save=False)
         deploysys.save_projects(self.projects)
         self.projects = deploysys.load_projects()
-        self.refresh_projects()
-        self.select_project_by_id(project_id)
-        self.select_service_by_id(service_id)
+        self.config_signature = self.current_config_signature()
+        self.refresh_projects(project_id, service_id)
         messagebox.showinfo("已保存", f"服务已保存到项目 {project.get('name')}：{service_name}")
         self.append_log(f"已保存服务: {project_id}/{service_id}\n")
 
@@ -271,9 +328,8 @@ class DeploySysGui(tk.Tk):
         service_id = str(service.get("id"))
         if self.add_target_to_service(service, save=True):
             self.projects = deploysys.load_projects()
-            self.refresh_projects()
-            self.select_project_by_id(project_id)
-            self.select_service_by_id(service_id)
+            self.config_signature = self.current_config_signature()
+            self.refresh_projects(project_id, service_id)
             messagebox.showinfo("已保存", "执行目标已保存。")
 
     def add_target_to_service(self, service: dict[str, Any], save: bool) -> bool:
@@ -310,17 +366,20 @@ class DeploySysGui(tk.Tk):
                 if "targets" in service:
                     service["targets"].pop(target[0], None)
                 deploysys.save_projects(self.projects)
+                self.config_signature = self.current_config_signature()
                 self.on_service_selected()
             return
         if service and project:
             if messagebox.askyesno("删除服务", f"删除服务 {service.get('name')}？"):
                 project["services"] = [item for item in project.get("services", []) if item.get("id") != service.get("id")]
                 deploysys.save_projects(self.projects)
+                self.config_signature = self.current_config_signature()
                 self.on_project_selected()
             return
         if project and messagebox.askyesno("删除项目", f"删除项目 {project.get('name')}？"):
             self.projects["projects"] = [item for item in self.projects.get("projects", []) if item.get("id") != project.get("id")]
             deploysys.save_projects(self.projects)
+            self.config_signature = self.current_config_signature()
             self.refresh_projects()
 
     def execute_selected(self) -> None:
@@ -351,6 +410,7 @@ class DeploySysGui(tk.Tk):
                 return
             target[1]["status_commands"] = commands
             deploysys.save_projects(self.projects)
+            self.config_signature = self.current_config_signature()
         self.run_in_background(project, service, target[0], target[1], "状态检查", commands)
 
     def run_in_background(
