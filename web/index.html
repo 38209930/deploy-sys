@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>deploy-sys</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <div><strong>deploy-sys</strong><span id="version">v__APP_VERSION__</span></div>
+    <div id="configPath" class="path"></div>
+  </header>
+  <main>
+    <section class="pane">
+      <div class="toolbar"><button id="refreshBtn">刷新</button><button id="addProjectBtn">新增项目</button></div>
+      <h2>项目</h2><div id="projects" class="list"></div>
+      <div class="toolbar footer"><button id="editProjectBtn">编辑项目</button><button class="danger" id="deleteProjectBtn">删除项目</button></div>
+    </section>
+    <section class="pane">
+      <div class="toolbar"><button id="addServiceBtn">新增服务</button></div>
+      <h2>服务</h2><div id="services" class="list"></div>
+      <div class="toolbar footer"><button id="editServiceBtn">编辑服务</button><button class="danger" id="deleteServiceBtn">删除服务</button></div>
+    </section>
+    <section class="workspace">
+      <div class="target-toolbar"><h2>执行目标</h2><div class="toolbar"><button id="addTargetBtn">新增执行目标</button><button id="editTargetBtn">编辑目标</button><button class="danger" id="deleteTargetBtn">删除目标</button></div></div>
+      <div id="targets" class="target-list"></div>
+      <div class="tabs"><button data-mode="run" class="tab active">执行命令</button><button data-mode="status" class="tab">状态检查命令</button></div>
+      <div class="editor-head"><label id="commandLabel" for="commands">执行命令，可直接粘贴多行</label><span id="dirty" hidden>未保存</span></div>
+      <textarea id="commands" spellcheck="false" placeholder="粘贴完整部署命令块，例如：&#10;cd /path/to/project&#10;bash scripts/deploy.sh"></textarea>
+      <details><summary>高级设置</summary><label for="shellMode">Shell</label><input id="shellMode" value="auto" placeholder="auto / zsh / bash / powershell / cmd"></details>
+      <div class="toolbar actions"><button id="saveCommandsBtn">保存命令</button><button class="primary" id="executeBtn">执行</button><button class="danger" id="cancelBtn" hidden>取消执行</button><button id="clearLogBtn">清空日志</button></div>
+      <div class="split-view"><pre id="projectDetails">请选择项目。</pre><pre id="log" aria-live="polite"></pre></div>
+    </section>
+  </main>
+  <div id="toast" role="status"></div>
+
+  <dialog id="projectDialog"><form id="projectForm"><h3 id="projectDialogTitle">新增项目</h3><label for="projectId">项目 ID</label><input id="projectId" required><label for="projectName">项目名称</label><input id="projectName" required><div class="form-actions"><button type="button" data-close="projectDialog">取消</button><button class="primary">保存</button></div></form></dialog>
+  <dialog id="serviceDialog"><form id="serviceForm"><h3 id="serviceDialogTitle">新增服务</h3><label for="serviceId">服务 ID</label><input id="serviceId" required><label for="serviceName">服务名称</label><input id="serviceName" required><div id="serviceCreateFields"><label for="serviceTarget">执行目标</label><input id="serviceTarget" value="默认"><label for="serviceCommands">执行命令，可直接粘贴多行</label><textarea id="serviceCommands" spellcheck="false"></textarea></div><div class="form-actions"><button type="button" data-close="serviceDialog">取消</button><button class="primary">保存</button></div></form></dialog>
+  <dialog id="targetDialog"><form id="targetForm"><h3 id="targetDialogTitle">新增执行目标</h3><label for="targetName">执行目标</label><input id="targetName" value="默认" required><label for="targetShell">Shell</label><input id="targetShell" value="auto"><div id="targetCreateFields"><label for="targetCommands">执行命令，可直接粘贴多行</label><textarea id="targetCommands" spellcheck="false"></textarea></div><div class="form-actions"><button type="button" data-close="targetDialog">取消</button><button class="primary">保存</button></div></form></dialog>
+  <script nonce="deploysys">window.DEPLOY_SYS_TOKEN = "__DEPLOY_SYS_TOKEN__";</script>
+  <script src="/app.js"></script>
+</body>
+</html>

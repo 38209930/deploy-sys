@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import base64
+import codecs
 import datetime as dt
 import json
 import os
@@ -13,8 +14,8 @@ import re
 import signal
 import shutil
 import subprocess
-import tempfile
 import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -24,6 +25,8 @@ from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from prompt_toolkit import prompt as pt_prompt
+
+from deploysys_store import ConfigConflict, ConfigError, ConfigSnapshot, ConfigStore
 
 
 ROOT = Path(__file__).resolve().parent
@@ -49,7 +52,7 @@ DEFAULT_SETTINGS = {
     "app": {"default_environment": "test", "log_retention_days": 30},
     "security": {
         "secrets_file": "config/secrets.enc",
-        "require_master_password": True,
+        "require_master_password": False,
         "mask_secrets_in_output": True,
         "block_commit_if_secret_file_staged": True,
     },
@@ -77,10 +80,6 @@ class CommandResult:
     command: str
     exit_code: int
     output: str
-
-
-class ConfigError(Exception):
-    pass
 
 
 class SecretError(Exception):
@@ -158,6 +157,8 @@ def ensure_gitignore() -> None:
         "logs/",
         "data/local*",
         "data/operation_logs.jsonl",
+        "data/config-backups/",
+        "config/*.lock",
         "__pycache__/",
         ".pytest_cache/",
     ]
@@ -185,12 +186,20 @@ def active_projects_file() -> Path:
     return PROJECTS_LOCAL_FILE if PROJECTS_LOCAL_FILE.exists() else PROJECTS_FILE
 
 
+def projects_store() -> ConfigStore:
+    return ConfigStore(PROJECTS_LOCAL_FILE, PROJECTS_FILE, DATA_DIR / "config-backups")
+
+
+def load_project_snapshot() -> ConfigSnapshot:
+    return projects_store().load()
+
+
 def load_projects() -> dict[str, Any]:
-    return load_yaml(active_projects_file(), DEFAULT_PROJECTS)
+    return load_project_snapshot().data
 
 
 def save_projects(projects: dict[str, Any]) -> None:
-    write_yaml(PROJECTS_LOCAL_FILE, projects)
+    projects_store().replace(projects)
 
 
 def write_yaml(path: Path, data: dict[str, Any]) -> None:
@@ -200,7 +209,6 @@ def write_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 def first_run_wizard(settings: dict[str, Any], projects: dict[str, Any]) -> None:
-    setup_master_password(settings)
     add_project_wizard(projects, settings)
 
 
@@ -663,16 +671,19 @@ def run_action_commands(
     commands: list[str],
     settings: dict[str, Any],
     output_callback: Callable[[str], None] | None = None,
+    cancellation_token: CancellationToken | None = None,
 ) -> tuple[list[CommandResult], Path]:
     runner = CommandRunner(settings, {}, output_callback)
-    results: list[CommandResult] = []
-    for command in commands:
-        result = runner.run(command, project, service, target_name, target_cfg, action)
-        results.append(result)
-        emit_line(output_callback, f"退出码: {result.exit_code}")
-        if result.exit_code != 0 and settings.get("safety", {}).get("stop_on_command_failure", True):
+    if cancellation_token:
+        cancellation_token.register(runner)
+    result = runner.run_block(commands, project, service, target_name, target_cfg, action, cancellation_token)
+    results = [result]
+    emit_line(output_callback, f"退出码: {result.exit_code}")
+    if result.exit_code != 0:
+        if cancellation_token and cancellation_token.cancelled():
+            emit_line(output_callback, "命令已取消。")
+        else:
             emit_line(output_callback, "命令失败，已停止后续步骤。")
-            break
     write_audit_log(project, service, target_name, target_cfg, action, results, runner.log_path)
     emit_line(output_callback, f"日志: {runner.log_path}")
     return results, runner.log_path
@@ -694,7 +705,7 @@ def command_process_options() -> dict[str, Any]:
     return {}
 
 
-def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
+def terminate_process_tree(proc: subprocess.Popen[Any]) -> None:
     if proc.poll() is not None:
         return
     if os.name == "posix":
@@ -703,7 +714,15 @@ def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
         except ProcessLookupError:
             return
     else:
-        proc.terminate()
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except OSError:
+            proc.terminate()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
@@ -716,18 +735,48 @@ def terminate_process_tree(proc: subprocess.Popen[str]) -> None:
             proc.kill()
 
 
-def enqueue_process_output(proc: subprocess.Popen[str], output_queue: queue.Queue[str | None]) -> None:
+def enqueue_process_output(proc: subprocess.Popen[bytes], output_queue: queue.Queue[str | None]) -> None:
     if not proc.stdout:
         output_queue.put(None)
         return
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
     try:
         while True:
-            chunk = proc.stdout.read(1)
-            if chunk == "":
+            reader = getattr(proc.stdout, "read1", proc.stdout.read)
+            chunk = reader(8192)
+            if not chunk:
                 break
-            output_queue.put(chunk)
+            text = decoder.decode(chunk)
+            if text:
+                output_queue.put(text)
+        tail = decoder.decode(b"", final=True)
+        if tail:
+            output_queue.put(tail)
     finally:
         output_queue.put(None)
+
+
+class CancellationToken:
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._lock = threading.Lock()
+        self._runner: CommandRunner | None = None
+
+    def cancel(self) -> None:
+        self._event.set()
+        with self._lock:
+            runner = self._runner
+        if runner:
+            runner.cancel()
+
+    def cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def register(self, runner: "CommandRunner") -> None:
+        with self._lock:
+            self._runner = runner
+        if self._event.is_set():
+            runner.cancel()
 
 
 class CommandRunner:
@@ -740,52 +789,70 @@ class CommandRunner:
         self.settings = settings
         self.secrets = secrets
         self.output_callback = output_callback
+        prune_logs(settings)
         today = dt.datetime.now().strftime("%Y-%m-%d")
         log_dir = LOGS_DIR / today
         log_dir.mkdir(parents=True, exist_ok=True)
-        self.log_path = log_dir / f"{dt.datetime.now().strftime('%H%M%S')}.log"
+        self.execution_id = uuid.uuid4().hex
+        self.log_path = log_dir / f"{dt.datetime.now().strftime('%H%M%S-%f')}-{self.execution_id[:8]}.log"
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._proc_lock = threading.Lock()
 
-    def run(
+    def cancel(self) -> None:
+        with self._proc_lock:
+            proc = self._proc
+        if proc:
+            terminate_process_tree(proc)
+
+    def run_block(
         self,
-        command: str,
+        commands: list[str],
         project: dict[str, Any],
         service: dict[str, Any],
         env_name: str,
         env_cfg: dict[str, Any],
         action: str,
+        cancellation_token: CancellationToken | None = None,
     ) -> CommandResult:
+        command = "\n".join(commands)
         masked_command = mask_text(command, self.secrets.values())
-        emit_line(self.output_callback, f"执行: {masked_command}")
+        emit_line(self.output_callback, f"执行 {action} 命令块:")
+        emit_line(self.output_callback, masked_command)
         start = dt.datetime.now()
         env = os.environ.copy()
         env.update(self.secrets)
         proc = subprocess.Popen(
-            command,
+            build_shell_command(command, str(env_cfg.get("shell") or "auto")),
             cwd=None,
             env=env,
-            shell=True,
-            text=True,
-            bufsize=1,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            text=False,
+            bufsize=0,
             **command_process_options(),
         )
+        with self._proc_lock:
+            self._proc = proc
         output_chunks: list[str] = []
+        output_size = 0
+        output_limit = 512_000
         idle_timeout = command_idle_timeout_seconds(self.settings)
         last_output_at = dt.datetime.now()
         output_queue: queue.Queue[str | None] = queue.Queue()
         reader = threading.Thread(target=enqueue_process_output, args=(proc, output_queue), daemon=True)
         reader.start()
         timed_out = False
+        cancelled = False
         with self.log_path.open("a", encoding="utf-8") as fh:
-            host = env_cfg.get("host", "-") if isinstance(env_cfg, dict) else "-"
-            fh.write(f"project={project.get('id')} service={service.get('id')} env={env_name} action={action} host={host}\n")
-            fh.write(f"started_at={start.isoformat()}\n")
-            fh.write(f"command={masked_command}\n")
-            fh.write("--- output ---\n")
+            fh.write(f"execution_id={self.execution_id} project={project.get('id')} service={service.get('id')} target={env_name} action={action}\n")
+            fh.write(f"started_at={start.isoformat()}\ncommand={masked_command}\n--- output ---\n")
             while True:
+                if cancellation_token and cancellation_token.cancelled():
+                    cancelled = True
+                    terminate_process_tree(proc)
                 try:
-                    chunk = output_queue.get(timeout=0.5)
+                    chunk = output_queue.get(timeout=0.2)
                 except queue.Empty:
                     if proc.poll() is not None and not reader.is_alive():
                         break
@@ -796,41 +863,51 @@ class CommandRunner:
                             "如远端备份或上传需要更久，可调整 settings.yaml 中的 "
                             "execution.command_idle_timeout_seconds，设为 0 可关闭。\n"
                         )
-                        output_chunks.append(timeout_message)
                         emit_text(self.output_callback, timeout_message)
                         fh.write(timeout_message)
-                        fh.flush()
                         timed_out = True
                         terminate_process_tree(proc)
-                        break
                     continue
                 if chunk is None:
                     if proc.poll() is not None:
                         break
                     continue
                 last_output_at = dt.datetime.now()
-                output_chunks.append(chunk)
                 masked_chunk = mask_text(chunk, self.secrets.values())
                 emit_text(self.output_callback, masked_chunk)
                 fh.write(masked_chunk)
                 fh.flush()
+                if output_size < output_limit:
+                    remaining = output_limit - output_size
+                    output_chunks.append(masked_chunk[:remaining])
+                    output_size += len(masked_chunk[:remaining])
             if proc.stdout:
                 proc.stdout.close()
         reader.join(timeout=1)
-        exit_code = COMMAND_IDLE_TIMEOUT_EXIT_CODE if timed_out else proc.wait()
+        with self._proc_lock:
+            self._proc = None
+        cancelled = cancelled or bool(cancellation_token and cancellation_token.cancelled())
+        exit_code = COMMAND_IDLE_TIMEOUT_EXIT_CODE if timed_out else (130 if cancelled else proc.wait())
         end = dt.datetime.now()
-        raw_output = "".join(output_chunks)
-        output = mask_text(raw_output, self.secrets.values())
+        output = "".join(output_chunks)
+        if output_size >= output_limit:
+            output += "\n[页面执行摘要已截断，完整内容请查看日志文件。]\n"
         with self.log_path.open("a", encoding="utf-8") as fh:
             if output and not output.endswith("\n"):
                 fh.write("\n")
-            fh.write(f"finished_at={end.isoformat()} exit_code={exit_code}\n")
-            if exit_code == 0:
-                cleaned_paths = cleanup_temp_publish_dirs(raw_output)
-                for cleaned_path in cleaned_paths:
-                    fh.write(f"cleanup_temp_dir={cleaned_path}\n")
-                    emit_line(self.output_callback, f"已清理本地临时发布目录: {cleaned_path}")
+            fh.write(f"finished_at={end.isoformat()} exit_code={exit_code} status={execution_status(exit_code, cancelled, timed_out)}\n")
         return CommandResult(masked_command, exit_code, output)
+
+    def run(
+        self,
+        command: str,
+        project: dict[str, Any],
+        service: dict[str, Any],
+        env_name: str,
+        env_cfg: dict[str, Any],
+        action: str,
+    ) -> CommandResult:
+        return self.run_block([command], project, service, env_name, env_cfg, action)
 
     def append_log(
         self,
@@ -858,26 +935,52 @@ def command_has_inline_secret(command: str) -> bool:
     return bool(TOKEN_RE.search(command) or re.search(r"(?i)--(?:password|token|secret|key)[=\s]\S+", command))
 
 
-def cleanup_temp_publish_dirs(output: str) -> list[str]:
-    temp_root = Path(tempfile.gettempdir()).resolve()
-    cleaned: list[str] = []
-    for raw_path in re.findall(r"(/[^\s'\"`]+)", output):
-        candidate = Path(raw_path.rstrip(".,;:)"))
-        if not candidate.is_absolute():
+def execution_status(exit_code: int, cancelled: bool = False, timed_out: bool = False) -> str:
+    if cancelled:
+        return "cancelled"
+    if timed_out:
+        return "timed_out"
+    return "success" if exit_code == 0 else "failed"
+
+
+def prune_logs(settings: dict[str, Any]) -> None:
+    raw = settings.get("app", {}).get("log_retention_days", 30)
+    try:
+        retention_days = max(1, int(raw))
+    except (TypeError, ValueError):
+        retention_days = 30
+    if not LOGS_DIR.exists():
+        return
+    threshold = dt.datetime.now().date() - dt.timedelta(days=retention_days)
+    for directory in LOGS_DIR.iterdir():
+        if not directory.is_dir():
             continue
         try:
-            resolved = candidate.resolve()
-        except OSError:
+            day = dt.date.fromisoformat(directory.name)
+        except ValueError:
             continue
-        if not resolved.is_dir():
-            continue
-        if temp_root not in resolved.parents:
-            continue
-        if not re.fullmatch(r"[^/]+\.[A-Za-z0-9]{4,}", resolved.name):
-            continue
-        shutil.rmtree(resolved)
-        cleaned.append(str(resolved))
-    return cleaned
+        if day < threshold:
+            shutil.rmtree(directory)
+
+
+def build_shell_command(command: str, shell_mode: str = "auto") -> list[str]:
+    mode = (shell_mode or "auto").lower()
+    if os.name == "nt":
+        if mode in {"auto", "powershell"}:
+            executable = shutil.which("pwsh") or shutil.which("powershell") or "powershell.exe"
+            return [executable, "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop';\n" + command]
+        if mode == "cmd":
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", command.replace("\n", " && ")]
+        raise ConfigError(f"Windows 不支持 shell={shell_mode}")
+    if mode == "auto":
+        executable = "/bin/zsh" if Path("/bin/zsh").exists() else "/bin/sh"
+    elif mode in {"zsh", "bash"}:
+        executable = f"/bin/{mode}"
+    else:
+        raise ConfigError(f"macOS 不支持 shell={shell_mode}")
+    if not Path(executable).exists():
+        raise ConfigError(f"未找到 shell: {executable}")
+    return [executable, "-e", "-c", command]
 
 
 def mask_text(text: str, secret_values: Iterable[str]) -> str:
@@ -1157,17 +1260,9 @@ def execute_status_commands(
     commands: list[str],
     settings: dict[str, Any],
 ) -> None:
-    runner = CommandRunner(settings, {})
-    results = []
-    for command in commands:
-        result = runner.run(command, project, service, env_name, env_cfg, "状态检查")
-        results.append(result)
-        print(f"退出码: {result.exit_code}")
-        if result.exit_code != 0 and settings.get("safety", {}).get("stop_on_command_failure", True):
-            print("命令失败，已停止后续状态检查。")
-            break
-    write_audit_log(project, service, env_name, env_cfg, "状态检查", results, runner.log_path)
-    print(f"日志: {runner.log_path}")
+    results, _log_path = run_action_commands(project, service, env_name, env_cfg, "状态检查", commands, settings)
+    if results and results[-1].exit_code != 0:
+        print("命令失败，已停止后续状态检查。")
 
 
 def derive_repo_from_commands(env_cfg: dict[str, Any]) -> str:

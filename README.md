@@ -7,19 +7,21 @@
 ## Features
 
 - 项目、子任务、执行目标三层管理：`project -> service -> target`
-- 新增项目时自动识别 macOS / Windows，识别失败时可手动选择
 - 每个执行目标保存一组原始命令，支持粘贴多行命令
 - 执行目标名称可自定义，例如 `默认`、`test`、`prod`、`local`
-- 状态检查命令按执行目标单独保存，首次使用时引导录入
+- 多行命令在同一个 shell 会话运行，`cd`、`export` 等上下文会保留到下一行
+- 状态检查命令按执行目标单独保存，可直接粘贴多行命令
 - 本地浏览器客户端支持点击项目、服务、执行目标后直接执行
 - 本地浏览器客户端支持直接编辑命令预览并保存
 - 本地浏览器客户端新增服务时可一次填写服务 ID、执行目标和执行命令
 - 本地浏览器客户端新增执行目标时可一次填写目标名称和执行命令
 - 本地浏览器客户端只监听 `127.0.0.1`，避免 Tk 原生控件在 macOS 上卡死
-- 本地浏览器客户端执行日志采用轮询刷新，并只保留最近日志，避免长输出导致界面卡顿
+- 命令编辑后必须保存才可执行，切换或刷新会提示未保存内容
+- 全局同一时间只执行一个任务，可在页面内取消
+- 本地浏览器客户端日志采用分块刷新并限制页面保留量，避免长输出导致界面卡顿
 - 执行日志本地保存，并对疑似敏感值做脱敏
-- 可查看项目配置和配置文件路径
-- 可删除项目、子任务或环境下保存的命令
+- 可查看项目完整配置和配置文件路径，并可编辑或删除项目、服务、执行目标
+- 保存采用原子写入、版本冲突保护和本地备份，避免多窗口覆盖配置
 
 ## Install
 
@@ -49,15 +51,21 @@ mac 也可以直接双击，启动后会自动打开浏览器：
 deploysys_gui.command
 ```
 
+Windows 可以双击：
+
+```text
+deploysys_gui.cmd
+```
+
 首次启动会自动生成：
 
 - `config/projects.yaml`
-- `config/projects.local.yaml`
 - `config/settings.yaml`
-- `config/secrets.enc`
 - `.gitignore`
 - `logs/`
 - `data/`
+
+首次保存项目后生成 `config/projects.local.yaml`；真实项目配置始终写入该私有文件。
 
 首页菜单：
 
@@ -76,25 +84,26 @@ deploysys_gui.command
 录入模型保持简单：
 
 - 项目：例如 `demo-platform`
-- 运行系统：`mac` 或 `windows`，新增项目时自动识别当前系统
 - 子任务服务：例如 `front-api`、`back-api`、`web-admin`
 - 执行目标：例如 `默认`、`test`、`prod`，名称可自定义
-- 命令：每个执行目标保存一组多行原始命令
+- 命令：每个执行目标保存一组多行原始命令，并在同一个 shell 中按顺序执行
 
 系统不会要求你输入 `local/ssh`、`host`、`workdir`、端口、Health URL、密钥名，也不会要求你把命令拆成 `build/deploy/start/stop`。命令怎么执行，由你粘贴的原始命令决定。
 
 本地浏览器客户端里：
 
-- 点“新增服务”时，可以一次填写服务 ID、服务名称、服务类型、执行目标和执行命令。
+- 点“新增服务”时，可以一次填写服务 ID、服务名称、执行目标和执行命令。
 - 选中某个服务后点“新增执行目标”时，可以一次填写执行目标和执行命令。
-- 执行目标和动作直接在列表里点击选择，不使用 Tk 下拉框或 Tk 文本框。
-- 命令输入框支持直接粘贴多行命令，保存后会自动重新加载并选中新配置。
+- 状态检查使用独立页签；首次录入可直接粘贴多行，不会弹出单行输入框。
+- 命令输入框支持直接粘贴多行命令，保存后会自动重新加载并保留选中项。
 
 ## Example Config
 
 `config/projects.yaml` 示例：
 
 ```yaml
+schema_version: 2
+revision: 1
 projects:
   - id: demo-platform
     name: Demo Platform
@@ -106,6 +115,7 @@ projects:
         type: dotnet
         targets:
           test:
+            shell: auto
             commands:
               run:
                 - cd /path/to/demo/front-api
@@ -120,21 +130,22 @@ projects:
               - bash scripts/check-front-api.sh
 ```
 
-命令录入示例：
+命令录入示例。部署成功后的本地清理由最后一行明确命令完成；工具不会根据输出自动删除目录：
 
 ```text
 命令[1]: cd /path/to/demo/front-api
 命令[2]: ENV_FILE=config/env.prod.example bash scripts/deploy-front-api.sh
-命令[3]:
+命令[3]: your-existing-cleanup-command
 ```
 
-看到空白的下一行提示时，直接回车结束录入。
+浏览器客户端可以一次粘贴完整命令块。终端兼容入口仍以空行结束录入。
 
 ## Safety Notes
 
 - `config/projects.yaml` 是公开模板，默认保持 `projects: []`。
 - 本机真实项目配置写入 `config/projects.local.yaml`，该文件默认不会提交到 Git。
-- `config/secrets*`、`logs/`、`data/operation_logs.jsonl` 默认不会提交到 Git。
+- `config/secrets*`、`logs/`、`data/operation_logs.jsonl`、`data/config-backups/` 默认不会提交到 Git。
+- 配置损坏时会保留原文件并尝试恢复最近一次有效备份；版本冲突不会静默覆盖另一个窗口的数据。
 - 不要把真实密码、Token、证书、私钥写进公开配置或 README。
 - 如果命令里必须使用密钥，建议从本机环境变量、私有配置文件或部署脚本内部读取。
 - 公开仓库只应保留示例路径，例如 `/path/to/demo/app`。

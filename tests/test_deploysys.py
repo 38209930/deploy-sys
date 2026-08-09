@@ -1,552 +1,247 @@
 import json
-import queue
-import tempfile
+import os
 import sys
+import tempfile
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
-from io import StringIO
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 import deploysys
 import deploysys_gui
+from deploysys_store import ConfigConflict, ConfigStore
 
 
-class DeploySysTests(unittest.TestCase):
-    def test_secrets_are_encrypted_and_round_trip(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "secrets.enc"
-            deploysys.save_secrets({"TOKEN": "abc123SECRETvalue"}, "master", path)
-            raw = path.read_text(encoding="utf-8")
-            self.assertNotIn("abc123SECRETvalue", raw)
-            self.assertEqual(deploysys.load_secrets("master", path)["TOKEN"], "abc123SECRETvalue")
-
-    def test_wrong_password_fails(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "secrets.enc"
-            deploysys.save_secrets({"TOKEN": "value"}, "master", path)
-            with self.assertRaises(deploysys.SecretError):
-                deploysys.load_secrets("wrong", path)
-
-    def test_mask_text_masks_known_values_and_password_fields(self):
-        text = "password=my-pass TOKEN=Abcdef1234567890Abcdef1234567890 done"
-        masked = deploysys.mask_text(text, ["my-pass"])
-        self.assertNotIn("my-pass", masked)
-        self.assertIn("password=******", masked)
-
-    def test_inline_secret_detection(self):
-        self.assertTrue(deploysys.command_has_inline_secret("deploy --password=abc"))
-        self.assertTrue(deploysys.command_has_inline_secret("TOKEN=abc sh deploy.sh"))
-        self.assertFalse(deploysys.command_has_inline_secret("sh deploy.sh"))
-
-    def test_action_label_uses_execute_for_default_command(self):
-        self.assertEqual(deploysys.action_label(deploysys.COMMAND_KEY), "执行")
-
-    def test_web_output_buffer_writes_to_session_queue(self):
-        output_queue: queue.Queue[str] = queue.Queue()
-        buffer = deploysys_gui.OutputBuffer({"queue": output_queue})
-        buffer.write("hello")
-        buffer.write(" world")
-        self.assertEqual(output_queue.get_nowait(), "hello")
-        self.assertEqual(output_queue.get_nowait(), " world")
-        self.assertTrue(output_queue.empty())
-
-    def test_strong_confirm_accepts_execute_phrase_and_legacy_command_phrase(self):
-        with patch("deploysys.prompt_text", return_value="apollo/admin-pc prod 执行"):
-            self.assertTrue(deploysys.strong_confirm("apollo/admin-pc", "prod", "执行"))
-        with patch("deploysys.prompt_text", return_value="apollo/admin-pc prod 命令"):
-            self.assertTrue(deploysys.strong_confirm("apollo/admin-pc", "prod", "执行"))
-
-    def test_strong_confirm_rejects_short_yes(self):
-        with patch("deploysys.prompt_text", return_value="y"), patch("sys.stdout", new_callable=StringIO) as output:
-            self.assertFalse(deploysys.strong_confirm("apollo/admin-pc", "prod", "执行"))
-        self.assertIn("需要输入：apollo/admin-pc prod 执行", output.getvalue())
-
-    def test_execute_action_does_not_confirm_for_prod_by_default(self):
-        with patch("deploysys.strong_confirm") as confirm, patch("deploysys.CommandRunner") as runner_cls, patch(
-            "deploysys.write_audit_log"
-        ):
-            runner = runner_cls.return_value
-            runner.run.return_value = deploysys.CommandResult("echo ok", 0, "ok")
-            runner.log_path = Path("/tmp/deploysys-test.log")
-            deploysys.execute_action(
-                {"id": "apollo"},
-                {"id": "admin-pc"},
-                "prod",
-                {},
-                deploysys.COMMAND_KEY,
-                ["echo ok"],
-                {"safety": {"stop_on_command_failure": True}},
-            )
-        confirm.assert_not_called()
-        runner.run.assert_called_once()
-
-    def test_audit_log_masks_command_supplied_by_runner(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_data = deploysys.DATA_DIR
-            deploysys.DATA_DIR = Path(tmp)
-            try:
-                deploysys.write_audit_log(
-                    {"id": "p1"},
-                    {"id": "svc1"},
-                    "test",
-                    {"host": "local"},
-                    "deploy",
-                    [deploysys.CommandResult("echo ******", 0, "ok")],
-                    Path(tmp) / "x.log",
-                )
-                line = (Path(tmp) / "operation_logs.jsonl").read_text(encoding="utf-8")
-                data = json.loads(line)
-                self.assertEqual(data["commands"], ["echo ******"])
-            finally:
-                deploysys.DATA_DIR = old_data
-
-    def test_command_runner_streams_output_to_terminal_and_log(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_logs = deploysys.LOGS_DIR
-            deploysys.LOGS_DIR = Path(tmp)
-            try:
-                runner = deploysys.CommandRunner({}, {})
-                with patch("sys.stdout", new_callable=StringIO) as output:
-                    result = runner.run(
-                        "printf 'hello'; printf ' world\\n'",
-                        {"id": "p1"},
-                        {"id": "svc1"},
-                        "test",
-                        {},
-                        "命令",
-                    )
-                self.assertEqual(result.exit_code, 0)
-                self.assertIn("hello world", output.getvalue())
-                log_text = runner.log_path.read_text(encoding="utf-8")
-                self.assertIn("hello world", log_text)
-                self.assertIn("exit_code=0", log_text)
-            finally:
-                deploysys.LOGS_DIR = old_logs
-
-    def test_command_runner_cleans_temp_publish_dir_after_success(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_logs = deploysys.LOGS_DIR
-            deploysys.LOGS_DIR = Path(tmp)
-            try:
-                runner = deploysys.CommandRunner({}, {})
-                with patch("sys.stdout", new_callable=StringIO) as output:
-                    result = runner.run(
-                        "d=$(mktemp -d \"${TMPDIR:-/tmp}/deploysys-test.XXXXXX\"); echo \"$d\"",
-                        {"id": "p1"},
-                        {"id": "svc1"},
-                        "test",
-                        {},
-                        "命令",
-                    )
-                self.assertEqual(result.exit_code, 0)
-                temp_dir = Path(output.getvalue().splitlines()[-2])
-                self.assertFalse(temp_dir.exists())
-                self.assertIn("cleanup_temp_dir=", runner.log_path.read_text(encoding="utf-8"))
-            finally:
-                deploysys.LOGS_DIR = old_logs
-
-    def test_cleanup_temp_publish_dirs_keeps_failed_command_artifacts(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_logs = deploysys.LOGS_DIR
-            deploysys.LOGS_DIR = Path(tmp)
-            try:
-                runner = deploysys.CommandRunner({}, {})
-                with patch("sys.stdout", new_callable=StringIO) as output:
-                    result = runner.run(
-                        "d=$(mktemp -d \"${TMPDIR:-/tmp}/deploysys-test.XXXXXX\"); echo \"$d\"; exit 2",
-                        {"id": "p1"},
-                        {"id": "svc1"},
-                        "test",
-                        {},
-                        "命令",
-                    )
-                self.assertEqual(result.exit_code, 2)
-                temp_dir = Path(output.getvalue().splitlines()[-1])
-                self.assertTrue(temp_dir.exists())
-                temp_dir.rmdir()
-            finally:
-                deploysys.LOGS_DIR = old_logs
-
-    def test_command_idle_timeout_seconds_defaults_and_normalizes(self):
-        self.assertEqual(deploysys.command_idle_timeout_seconds({}), 300)
-        self.assertEqual(deploysys.command_idle_timeout_seconds({"execution": {"command_idle_timeout_seconds": "0"}}), 0)
-        self.assertEqual(deploysys.command_idle_timeout_seconds({"execution": {"command_idle_timeout_seconds": "bad"}}), 300)
-
-    def test_command_runner_stops_when_command_has_no_output_too_long(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_logs = deploysys.LOGS_DIR
-            deploysys.LOGS_DIR = Path(tmp)
-            try:
-                runner = deploysys.CommandRunner({"execution": {"command_idle_timeout_seconds": 1}}, {})
-                with patch("sys.stdout", new_callable=StringIO) as output:
-                    result = runner.run(
-                        f"{sys.executable} -c 'import time; time.sleep(10)'",
-                        {"id": "p1"},
-                        {"id": "svc1"},
-                        "test",
-                        {},
-                        "命令",
-                    )
-                self.assertEqual(result.exit_code, deploysys.COMMAND_IDLE_TIMEOUT_EXIT_CODE)
-                self.assertIn("命令超过 1 秒没有输出", output.getvalue())
-                log_text = runner.log_path.read_text(encoding="utf-8")
-                self.assertIn("exit_code=124", log_text)
-            finally:
-                deploysys.LOGS_DIR = old_logs
-
-    def test_project_services_supports_legacy_single_service(self):
-        project = {
-            "id": "mall",
-            "name": "Mall",
-            "type": "dotnet",
-            "environments": {"test": {"commands": {"deploy": ["sh deploy.sh"]}}},
+class IsolatedWorkspace(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.original = {
+            name: getattr(deploysys, name)
+            for name in ("CONFIG_DIR", "PROJECTS_FILE", "PROJECTS_LOCAL_FILE", "SETTINGS_FILE", "LOGS_DIR", "DATA_DIR", "GITIGNORE_FILE")
         }
-        services = deploysys.project_services(project)
-        self.assertEqual(len(services), 1)
-        self.assertEqual(services[0]["id"], "mall")
-        self.assertEqual(services[0]["environments"]["test"]["commands"]["deploy"], ["sh deploy.sh"])
+        deploysys.CONFIG_DIR = self.root / "config"
+        deploysys.PROJECTS_FILE = deploysys.CONFIG_DIR / "projects.yaml"
+        deploysys.PROJECTS_LOCAL_FILE = deploysys.CONFIG_DIR / "projects.local.yaml"
+        deploysys.SETTINGS_FILE = deploysys.CONFIG_DIR / "settings.yaml"
+        deploysys.LOGS_DIR = self.root / "logs"
+        deploysys.DATA_DIR = self.root / "data"
+        deploysys.GITIGNORE_FILE = self.root / ".gitignore"
+        deploysys.ensure_base_files()
 
-    def test_project_services_prefers_explicit_services(self):
-        project = {
-            "id": "suite",
-            "services": [
-                {"id": "front-api", "name": "Front API"},
-                {"id": "back-api", "name": "Back API"},
-            ],
-        }
-        services = deploysys.project_services(project)
-        self.assertEqual([item["id"] for item in services], ["front-api", "back-api"])
+    def tearDown(self):
+        for name, value in self.original.items():
+            setattr(deploysys, name, value)
+        self.temp.cleanup()
 
-    def test_service_targets_prefers_custom_targets_and_supports_legacy_environments(self):
-        service = {
-            "targets": {"默认": {"commands": {"run": ["echo default"]}}},
-            "environments": {"test": {"commands": {"run": ["echo test"]}}},
-        }
-        self.assertEqual(list(deploysys.service_targets(service)), ["默认"])
-        legacy_service = {"environments": {"test": {}, "prod": {}}}
-        self.assertEqual(deploysys.ordered_target_names(legacy_service), ["test", "prod"])
 
-    def test_find_project_and_service(self):
-        projects = {
-            "projects": [
-                {
-                    "id": "mall",
-                    "services": [{"id": "front-api", "name": "Front API"}],
-                }
-            ]
-        }
-        project = deploysys.find_project(projects, "mall")
-        self.assertIsNotNone(project)
-        self.assertEqual(deploysys.find_service(project, "front-api")["name"], "Front API")
-
-    def test_view_project_flow_prints_config_path(self):
-        projects = {"projects": [{"id": "mall", "name": "Mall", "services": []}]}
-        with patch("deploysys.prompt_text", side_effect=["1"]), patch("sys.stdout", new_callable=StringIO) as output:
-            deploysys.view_project_flow(projects)
-        rendered = output.getvalue()
-        self.assertIn(str(deploysys.active_projects_file()), rendered)
-        self.assertIn("Mall (mall)", rendered)
-
-    def test_render_project_details_contains_services_and_commands(self):
-        project = {
-            "id": "mall",
-            "name": "Mall",
-            "type": "other",
-            "services": [
-                {
-                    "id": "front-api",
-                    "name": "Front API",
-                    "type": "java",
-                    "environments": {
-                        "prod": {
-                            "commands": {
-                                "run": [
-                                    "cd /path/to/demo/front-api",
-                                    "ENV_FILE=config/env.prod.example bash scripts/deploy-front-api.sh",
-                                ]
-                            },
-                        }
-                    },
-                }
-            ],
-        }
-        rendered = deploysys.render_project_details(project)
-        self.assertIn("Mall (mall)", rendered)
-        self.assertIn("Front API (front-api)", rendered)
-        self.assertIn("执行:", rendered)
-        self.assertIn("ENV_FILE=config/env.prod.example bash scripts/deploy-front-api.sh", rendered)
-        self.assertNotIn("repo.mac", rendered)
-        self.assertNotIn("mode=", rendered)
-        self.assertNotIn("workdir=", rendered)
-        self.assertNotIn("ports=", rendered)
-        self.assertNotIn("health_urls=", rendered)
-        self.assertNotIn("secrets=", rendered)
-
-    def test_render_project_details_contains_status_commands(self):
-        project = {
-            "id": "mall",
-            "name": "Mall",
-            "services": [
-                {
-                    "id": "front-api",
-                    "name": "Front API",
-                    "environments": {
-                        "test": {
-                            "commands": {"run": ["echo deploy"]},
-                            "status_commands": ["echo status"],
-                        }
-                    },
-                }
-            ],
-        }
-        rendered = deploysys.render_project_details(project)
-        self.assertIn("状态检查命令:", rendered)
-        self.assertIn("echo status", rendered)
-
-    def test_ask_command_lines_collects_multiple_lines(self):
-        with patch("deploysys.prompt_text", side_effect=["cd /tmp/app", "bash deploy.sh", ""]):
-            commands = deploysys.ask_command_lines("test 环境命令")
-        self.assertEqual(commands, ["cd /tmp/app", "bash deploy.sh"])
-
-    def test_select_action_returns_run_without_prompt(self):
-        commands = {"run": ["sh deploy.sh"]}
-        action = deploysys.select_action(commands)
-        self.assertEqual(action, "run")
-
-    def test_select_action_returns_expected_legacy_action(self):
-        commands = {"build": ["npm run build"], "deploy": ["sh deploy.sh"]}
-        with patch("deploysys.prompt_text", side_effect=["2"]):
-            action = deploysys.select_action(commands)
-        self.assertEqual(action, "deploy")
-
-    def test_delete_service_flow_removes_service(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_projects = deploysys.PROJECTS_FILE
-            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
-            deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
-            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
-            projects = {
-                "projects": [
-                    {
-                        "id": "mall",
-                        "name": "Mall",
-                        "services": [
-                            {"id": "front-api", "name": "Front API"},
-                            {"id": "back-api", "name": "Back API"},
-                        ],
-                    }
-                ]
-            }
-            try:
-                with patch("deploysys.prompt_text", side_effect=["1", "1", "mall/front-api local delete-service"]):
-                    deploysys.delete_service_flow(projects)
-                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
-                self.assertEqual([item["id"] for item in saved["projects"][0]["services"]], ["back-api"])
-            finally:
-                deploysys.PROJECTS_FILE = old_projects
-                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
-
-    def test_delete_action_commands_flow_removes_only_selected_action(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_projects = deploysys.PROJECTS_FILE
-            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
-            deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
-            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
-            projects = {
-                "projects": [
-                    {
-                        "id": "mall",
-                        "name": "Mall",
-                        "services": [
-                            {
-                                "id": "front-api",
-                                "name": "Front API",
-                                "environments": {
-                                    "test": {
-                                        "commands": {
-                                            "build": ["npm run build"],
-                                            "deploy": ["sh deploy.sh"],
-                                        }
-                                    }
-                                },
-                            }
-                        ],
-                    }
-                ]
-            }
-            try:
-                with patch("deploysys.prompt_text", side_effect=["1", "1", "1", "2", "mall/front-api test delete-deploy"]):
-                    deploysys.delete_action_commands_flow(projects)
-                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
-                commands = saved["projects"][0]["services"][0]["environments"]["test"]["commands"]
-                self.assertIn("build", commands)
-                self.assertNotIn("deploy", commands)
-            finally:
-                deploysys.PROJECTS_FILE = old_projects
-                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
-
-    def test_extract_repo_from_command(self):
-        self.assertEqual(
-            deploysys.extract_repo_from_command("cd /path/to/demo/front-api"),
-            "/path/to/demo/front-api",
+class ConfigStoreTests(IsolatedWorkspace):
+    def test_legacy_project_is_migrated_with_backup(self):
+        deploysys.PROJECTS_LOCAL_FILE.write_text(
+            "projects:\n  - id: legacy\n    name: Legacy\n    environments:\n      prod:\n        commands:\n          deploy: [echo legacy]\n",
+            encoding="utf-8",
         )
-        self.assertEqual(deploysys.extract_repo_from_command('cd "/tmp/my repo"'), "/tmp/my repo")
-        self.assertEqual(deploysys.extract_repo_from_command("bash deploy.sh"), "")
+        snapshot = deploysys.load_project_snapshot()
+        project = snapshot.data["projects"][0]
+        self.assertEqual(project["services"][0]["id"], "legacy")
+        self.assertEqual(project["services"][0]["targets"]["prod"]["commands"]["deploy"], ["echo legacy"])
+        self.assertTrue(list((deploysys.DATA_DIR / "config-backups").glob("projects.local.*.yaml")))
 
-    def test_derive_repo_from_commands_prefers_first_cd(self):
-        env_cfg = {"commands": {"deploy": ["cd /tmp/app", "bash deploy.sh"]}}
-        self.assertEqual(deploysys.derive_repo_from_commands(env_cfg), "/tmp/app")
+    def test_parallel_mutations_keep_all_services(self):
+        store = deploysys.projects_store()
+        store.mutate(0, lambda data: data["projects"].append({"id": "suite", "name": "Suite", "services": []}))
 
-    def test_derive_repo_from_run_commands(self):
-        env_cfg = {"commands": {"run": ["cd /tmp/app", "bash deploy.sh"]}}
-        self.assertEqual(deploysys.derive_repo_from_commands(env_cfg), "/tmp/app")
+        def add(index):
+            store.mutate(
+                None,
+                lambda data, i=index: data["projects"][0]["services"].append(
+                    {"id": f"svc-{i}", "name": f"Service {i}", "targets": {"default": {"commands": {"run": ["echo ok"]}}}}
+                ),
+            )
 
-    def test_ask_environment_commands_uses_single_run_key(self):
-        with patch("deploysys.prompt_text", side_effect=["cd /tmp/app", "bash deploy.sh", ""]):
-            commands = deploysys.ask_environment_commands("prod")
-        self.assertEqual(commands, {"run": ["cd /tmp/app", "bash deploy.sh"]})
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            list(pool.map(add, range(100)))
+        services = store.load().data["projects"][0]["services"]
+        self.assertEqual(len(services), 100)
+        self.assertEqual({item["id"] for item in services}, {f"svc-{i}" for i in range(100)})
 
-    def test_add_service_to_existing_project_flow_appends_and_saves(self):
+    def test_failed_atomic_write_keeps_previous_config(self):
+        store = deploysys.projects_store()
+        store.mutate(0, lambda data: data["projects"].append({"id": "safe", "name": "Safe", "services": []}))
+        original = deploysys.PROJECTS_LOCAL_FILE.read_text(encoding="utf-8")
+        with patch("deploysys_store.yaml.safe_dump", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                store.mutate(1, lambda data: data["projects"].append({"id": "lost", "name": "Lost", "services": []}))
+        self.assertEqual(deploysys.PROJECTS_LOCAL_FILE.read_text(encoding="utf-8"), original)
+
+    def test_corrupted_config_recovers_latest_backup(self):
+        store = deploysys.projects_store()
+        store.mutate(0, lambda data: data["projects"].append({"id": "recover", "name": "Recover", "services": []}))
+        store.mutate(1, lambda data: data["projects"][0].update({"name": "Recover Updated"}))
+        deploysys.PROJECTS_LOCAL_FILE.write_text("projects: [broken", encoding="utf-8")
+        snapshot = store.load()
+        self.assertTrue(snapshot.recovered_from_backup)
+        self.assertEqual(snapshot.data["projects"][0]["name"], "Recover")
+
+
+class CommandRunnerTests(IsolatedWorkspace):
+    def settings(self, timeout=5):
+        return {"safety": {"stop_on_command_failure": True}, "execution": {"command_idle_timeout_seconds": timeout}}
+
+    def context_commands(self, target):
+        if os.name == "nt":
+            return [f'Set-Location "{target}"', "$env:DEPLOYSYS_FLAG='works'", f'if ($PWD.Path -ne "{target}") {{ throw "wrong cwd" }}', 'Write-Output "context-ok|$env:DEPLOYSYS_FLAG"']
+        return [f'cd "{target}"', "export DEPLOYSYS_FLAG=works", f'test "$PWD" = "{target}"', 'printf "context-ok|%s\\n" "$DEPLOYSYS_FLAG"']
+
+    @staticmethod
+    def sleep_command(seconds):
+        return f"Start-Sleep -Seconds {seconds}" if os.name == "nt" else f"{sys.executable} -c 'import time; time.sleep({seconds})'"
+
+    @staticmethod
+    def print_command(text):
+        return f'Write-Output "{text}"' if os.name == "nt" else f'printf "{text}"'
+
+    def test_multiline_block_preserves_cd_and_environment(self):
+        target = self.root / "target"
+        target.mkdir()
+        output = []
+        results, _ = deploysys.run_action_commands(
+            {"id": "p"}, {"id": "s"}, "prod", {}, "执行",
+            self.context_commands(target),
+            self.settings(), output.append,
+        )
+        self.assertEqual(results[-1].exit_code, 0)
+        self.assertIn("context-ok|works", results[-1].output)
+
+    def test_command_block_stops_after_first_failure(self):
+        output = []
+        results, _ = deploysys.run_action_commands(
+            {"id": "p"}, {"id": "s"}, "default", {}, "执行", ["throw 'failed'" if os.name == "nt" else "false", self.print_command("should-not-run")], self.settings(), output.append
+        )
+        self.assertNotEqual(results[-1].exit_code, 0)
+        self.assertNotIn("should-not-run", results[-1].output)
+
+    def test_runner_never_guesses_temp_directory_for_cleanup(self):
+        directory = self.root / "publish.cache"
+        directory.mkdir()
+        runner = deploysys.CommandRunner(self.settings(), {})
+        result = runner.run(self.print_command(str(directory)), {"id": "p"}, {"id": "s"}, "default", {}, "执行")
+        self.assertEqual(result.exit_code, 0)
+        self.assertTrue(directory.exists())
+
+    def test_cancel_stops_process_group(self):
+        token = deploysys.CancellationToken()
+        outcome = {}
+
+        def run():
+            outcome["result"] = deploysys.run_action_commands(
+                {"id": "p"}, {"id": "s"}, "default", {}, "执行", [self.sleep_command(20)], self.settings(30), cancellation_token=token
+            )
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        time.sleep(0.35)
+        token.cancel()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(outcome["result"][0][-1].exit_code, 130)
+
+    def test_timeout_and_unique_log_files(self):
+        first = deploysys.CommandRunner(self.settings(1), {})
+        result = first.run(self.sleep_command(5), {"id": "p"}, {"id": "s"}, "default", {}, "执行")
+        second = deploysys.CommandRunner(self.settings(), {})
+        self.assertEqual(result.exit_code, deploysys.COMMAND_IDLE_TIMEOUT_EXIT_CODE)
+        self.assertNotEqual(first.log_path, second.log_path)
+
+
+class ApiTests(IsolatedWorkspace):
+    def setUp(self):
+        super().setUp()
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), deploysys_gui.Handler)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(timeout=2)
+        super().tearDown()
+
+    def request(self, path, body=None):
+        payload = json.dumps(body).encode("utf-8") if body is not None else None
+        request = Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=payload,
+            headers={"X-Deploy-Sys-Token": deploysys_gui.REQUEST_TOKEN, "Content-Type": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            return error.code, json.loads(error.read().decode("utf-8"))
+
+    @staticmethod
+    def print_command(text):
+        return f'Write-Output "{text}"' if os.name == "nt" else f'printf "{text}"'
+
+    def test_create_duplicate_and_revision_conflict_are_explicit(self):
+        status, created = self.request("/api/projects", {"revision": 0, "id": "demo", "name": "Demo"})
+        self.assertEqual(status, 200)
+        revision = created["state"]["revision"]
+        status, duplicate = self.request("/api/projects", {"revision": revision, "id": "demo", "name": "Duplicate"})
+        self.assertEqual(status, 400)
+        self.assertIn("已存在", duplicate["error"])
+        status, conflict = self.request("/api/services", {"revision": 0, "project_id": "demo", "id": "api", "name": "API", "target_name": "prod", "commands": ["echo ok"]})
+        self.assertEqual(status, 409)
+        self.assertEqual(conflict["code"], "conflict")
+
+    def test_service_target_commands_and_execution(self):
+        _, project = self.request("/api/projects", {"revision": 0, "id": "demo", "name": "Demo"})
+        _, service = self.request("/api/services", {"revision": project["state"]["revision"], "project_id": "demo", "id": "api", "name": "API", "target_name": "default", "commands": [self.print_command("api-ok")]})
+        status, execution = self.request("/api/executions", {"project_id": "demo", "service_id": "api", "target_name": "default"})
+        self.assertEqual(status, 200)
+        execution_id = execution["execution"]["id"]
+        cursor = 0
+        for _ in range(20):
+            time.sleep(0.05)
+            status, payload = self.request(f"/api/executions/{execution_id}?cursor={cursor}")
+            cursor = payload["cursor"]
+            if payload["done"]:
+                break
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["done"])
+        self.assertEqual(payload["status"], "success")
+
+    def test_token_and_empty_command_are_rejected(self):
+        request = Request(f"http://127.0.0.1:{self.port}/api/state")
+        with self.assertRaises(HTTPError) as error:
+            urlopen(request, timeout=5)
+        self.assertEqual(error.exception.code, 400)
+        _, project = self.request("/api/projects", {"revision": 0, "id": "demo", "name": "Demo"})
+        status, payload = self.request("/api/services", {"revision": project["state"]["revision"], "project_id": "demo", "id": "api", "name": "API", "target_name": "default", "commands": []})
+        self.assertEqual(status, 400)
+        self.assertIn("至少需要", payload["error"])
+
+
+class CompatibilityTests(unittest.TestCase):
+    def test_encryption_round_trip_and_masking(self):
         with tempfile.TemporaryDirectory() as tmp:
-            old_projects = deploysys.PROJECTS_FILE
-            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
-            deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
-            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
-            projects = {
-                "projects": [
-                    {
-                        "id": "mall",
-                        "name": "Mall",
-                        "services": [
-                            {"id": "front-api", "name": "Front API"},
-                        ],
-                    }
-                ]
-            }
-            try:
-                with patch(
-                    "deploysys.prompt_text",
-                    side_effect=[
-                        "1",
-                        "back-api",
-                        "Back API",
-                        "",
-                        "y",
-                        "test,prod",
-                        "echo test",
-                        "",
-                        "echo prod",
-                        "",
-                        "n",
-                    ],
-                ):
-                    deploysys.add_service_to_existing_project_flow(projects, {})
-                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
-                services = saved["projects"][0]["services"]
-                self.assertEqual([item["id"] for item in services], ["front-api", "back-api"])
-                self.assertEqual(
-                    services[1]["targets"]["prod"]["commands"]["run"],
-                    ["echo prod"],
-                )
-            finally:
-                deploysys.PROJECTS_FILE = old_projects
-                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
+            path = Path(tmp) / "secrets.enc"
+            deploysys.save_secrets({"TOKEN": "Abc123SecretValue"}, "master", path)
+            self.assertNotIn("Abc123SecretValue", path.read_text(encoding="utf-8"))
+            self.assertEqual(deploysys.load_secrets("master", path)["TOKEN"], "Abc123SecretValue")
+        self.assertIn("******", deploysys.mask_text("password=something", []))
 
-    def test_status_flow_prompts_saves_and_executes_when_missing(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            old_projects = deploysys.PROJECTS_FILE
-            old_local_projects = deploysys.PROJECTS_LOCAL_FILE
-            deploysys.PROJECTS_FILE = Path(tmp) / "projects.yaml"
-            deploysys.PROJECTS_LOCAL_FILE = Path(tmp) / "projects.local.yaml"
-            projects = {
-                "projects": [
-                    {
-                        "id": "mall",
-                        "name": "Mall",
-                        "services": [
-                            {
-                                "id": "front-api",
-                                "name": "Front API",
-                                "environments": {"test": {"commands": {"run": ["echo deploy"]}}},
-                            }
-                        ],
-                    }
-                ]
-            }
-            settings = {"app": {"default_environment": "test"}, "safety": {"stop_on_command_failure": True}}
-            try:
-                with patch("deploysys.prompt_text", side_effect=["1", "1", "1", "echo status", ""]), patch(
-                    "deploysys.execute_status_commands"
-                ) as execute:
-                    deploysys.status_flow(settings, projects)
-                saved = deploysys.load_yaml(deploysys.PROJECTS_LOCAL_FILE, {"projects": []})
-                env_cfg = saved["projects"][0]["services"][0]["environments"]["test"]
-                self.assertEqual(env_cfg["status_commands"], ["echo status"])
-                execute.assert_called_once()
-            finally:
-                deploysys.PROJECTS_FILE = old_projects
-                deploysys.PROJECTS_LOCAL_FILE = old_local_projects
-
-    def test_collect_service_identity_allows_reentry(self):
-        project = {"id": "mall", "services": []}
-        with patch(
-            "deploysys.prompt_text",
-            side_effect=[
-                "front-api",
-                "错误名称",
-                "vue3",
-                "n",
-                "front-api",
-                "正确名称",
-                "vue3",
-                "y",
-            ],
-        ):
-            service_id, service_name, service_type = deploysys.collect_service_identity(project)
-        self.assertEqual((service_id, service_name, service_type), ("front-api", "正确名称", "vue3"))
-
-    def test_detect_platform_on_darwin(self):
-        with patch("deploysys.platform.system", return_value="Darwin"):
-            self.assertEqual(deploysys.detect_platform(), deploysys.PLATFORM_MAC)
-
-    def test_detect_platform_on_windows(self):
-        with patch("deploysys.platform.system", return_value="Windows"):
-            self.assertEqual(deploysys.detect_platform(), deploysys.PLATFORM_WINDOWS)
-
-    def test_detect_platform_returns_none_for_unknown(self):
-        with patch("deploysys.platform.system", return_value="Linux"):
-            self.assertIsNone(deploysys.detect_platform())
-
-    def test_normalize_platform_accepts_aliases(self):
-        self.assertEqual(deploysys.normalize_platform("macOS"), deploysys.PLATFORM_MAC)
-        self.assertEqual(deploysys.normalize_platform("win"), deploysys.PLATFORM_WINDOWS)
-        self.assertIsNone(deploysys.normalize_platform("linux"))
-
-    def test_ask_project_platform_uses_detected_default(self):
-        with patch("deploysys.detect_platform", return_value=deploysys.PLATFORM_MAC), patch(
-            "deploysys.prompt_text", return_value=""
-        ):
-            self.assertEqual(deploysys.ask_project_platform(), deploysys.PLATFORM_MAC)
-
-    def test_ask_project_platform_allows_override_when_detected(self):
-        with patch("deploysys.detect_platform", return_value=deploysys.PLATFORM_MAC), patch(
-            "deploysys.prompt_text", return_value="windows"
-        ):
-            self.assertEqual(deploysys.ask_project_platform(), deploysys.PLATFORM_WINDOWS)
-
-    def test_ask_project_platform_prompts_manual_selection_when_unknown(self):
-        with patch("deploysys.detect_platform", return_value=None), patch("deploysys.prompt_text", return_value="2"):
-            self.assertEqual(deploysys.ask_project_platform(), deploysys.PLATFORM_WINDOWS)
-
-    def test_render_project_details_contains_platform(self):
-        project = {
-            "id": "mall",
-            "name": "Mall",
-            "platform": deploysys.PLATFORM_MAC,
-            "services": [],
-        }
-        rendered = deploysys.render_project_details(project)
-        self.assertIn("运行系统: macOS", rendered)
+    def test_shell_selection_and_target_order(self):
+        self.assertEqual(deploysys.build_shell_command("echo ok", "auto")[-1], "echo ok")
+        service = {"targets": {"prod": {}, "custom": {}, "默认": {}}}
+        self.assertEqual(deploysys.ordered_target_names(service), ["默认", "prod", "custom"])
 
 
 if __name__ == "__main__":
