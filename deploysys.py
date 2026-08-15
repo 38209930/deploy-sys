@@ -73,6 +73,10 @@ PLATFORM_MAC = "mac"
 PLATFORM_WINDOWS = "windows"
 COMMAND_IDLE_TIMEOUT_EXIT_CODE = 124
 DEFAULT_TARGET_NAME = "默认"
+BACK_COMMAND = ":back"
+NAV_BACK = object()
+NO_CONFIG = object()
+PROJECT_DELETED = object()
 
 
 @dataclass
@@ -110,28 +114,15 @@ def main() -> int:
 
     while True:
         print("\n==== deploy-sys ====")
-        print("1. 项目部署/服务操作")
-        print("2. 服务状态检查")
-        print("3. 新增项目")
-        print("4. 给已有项目新增服务")
-        print("5. 查看项目配置")
-        print("6. 删除已录入内容")
+        print("1. 选择项目")
+        print("2. 新增项目")
         print("0. 退出")
         choice = prompt_text("请选择").strip()
         if choice == "1":
-            project_flow(settings, projects)
+            project_list_loop(settings)
         elif choice == "2":
-            status_flow(settings, projects)
-        elif choice == "3":
+            projects = load_projects()
             add_project_wizard(projects, settings)
-            projects = load_projects()
-        elif choice == "4":
-            add_service_to_existing_project_flow(projects, settings)
-            projects = load_projects()
-        elif choice == "5":
-            view_project_flow(projects)
-        elif choice == "6":
-            delete_config_flow(projects)
             projects = load_projects()
         elif choice == "0":
             return 0
@@ -231,7 +222,11 @@ def setup_master_password(settings: dict[str, Any]) -> None:
 
 
 def add_project_wizard(projects: dict[str, Any], settings: dict[str, Any]) -> None:
-    project_id = ask_required("项目 ID，例如 mall-api")
+    print(f"提示：输入 {BACK_COMMAND} 可取消当前录入。")
+    project_id = ask_required("项目 ID，例如 mall-api", allow_back=True)
+    if project_id is NAV_BACK:
+        print("已取消新增项目。")
+        return
     existing_project = find_project(projects, project_id)
     if existing_project:
         print("项目已存在，当前配置如下：")
@@ -241,9 +236,19 @@ def add_project_wizard(projects: dict[str, Any], settings: dict[str, Any]) -> No
             save_projects(projects)
         return
 
-    name = ask_required("项目名称")
-    project_type = prompt_text("项目分组类型(dotnet/java/vue3/other，默认 other)", "other").strip() or "other"
+    name = ask_required("项目名称", allow_back=True)
+    if name is NAV_BACK:
+        print("已取消新增项目。")
+        return
+    project_type_raw = prompt_text("项目分组类型(dotnet/java/vue3/other，默认 other)", "other").strip()
+    if project_type_raw == BACK_COMMAND:
+        print("已取消新增项目。")
+        return
+    project_type = project_type_raw or "other"
     project_platform = ask_project_platform()
+    if project_platform is NAV_BACK:
+        print("已取消新增项目。")
+        return
     project = {
         "id": project_id,
         "name": name,
@@ -273,7 +278,7 @@ def append_services_to_project(project: dict[str, Any], settings: dict[str, Any]
 
 def add_service_to_existing_project_flow(projects: dict[str, Any], settings: dict[str, Any]) -> None:
     project = select_project(projects)
-    if not project:
+    if project is NAV_BACK or project is NO_CONFIG:
         return
     print("当前项目配置如下：")
     print(render_project_details(project))
@@ -288,9 +293,16 @@ def collect_service_config(project: dict[str, Any]) -> dict[str, Any] | None:
     if not service_id:
         return None
     targets: dict[str, Any] = {}
-    for target_name in ask_target_names():
+    target_names = ask_target_names()
+    if target_names is NAV_BACK:
+        print("已取消本次服务录入。")
+        return None
+    for target_name in target_names:
         print(f"\n配置 {service_name} 的 {target_name} 执行目标")
         commands = ask_environment_commands(target_name)
+        if commands is NAV_BACK:
+            print("已取消本次服务录入。")
+            return None
         targets[target_name] = {
             "commands": commands,
         }
@@ -303,15 +315,23 @@ def collect_service_config(project: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def collect_service_identity(project: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+    print(f"提示：输入 {BACK_COMMAND} 可取消当前录入。")
     while True:
-        service_id = ask_required(f"服务 ID，例如 {project['id']}-api / front-api")
+        service_id = ask_required(f"服务 ID，例如 {project['id']}-api / front-api", allow_back=True)
+        if service_id is NAV_BACK:
+            return None, None, None
         existing_service = find_service(project, service_id)
         if existing_service:
             print("子任务已存在，当前配置如下：")
             print(render_service_details(existing_service))
             return None, None, None
-        service_name = ask_required("服务名称")
-        service_type = prompt_text("服务类型(dotnet/java/vue3/other，默认 other)", "other").strip() or "other"
+        service_name = ask_required("服务名称", allow_back=True)
+        if service_name is NAV_BACK:
+            return None, None, None
+        service_type_raw = prompt_text("服务类型(dotnet/java/vue3/other，默认 other)", "other").strip()
+        if service_type_raw == BACK_COMMAND:
+            return None, None, None
+        service_type = service_type_raw or "other"
         print("请确认服务基础信息：")
         print(f"- 服务 ID: {service_id}")
         print(f"- 服务名称: {service_name}")
@@ -321,9 +341,11 @@ def collect_service_identity(project: dict[str, Any]) -> tuple[str | None, str |
         print("已取消本次输入，请重新录入服务基础信息。")
 
 
-def ask_required(prompt: str) -> str:
+def ask_required(prompt: str, allow_back: bool = False) -> str | object:
     while True:
         value = prompt_text(prompt).strip()
+        if allow_back and value == BACK_COMMAND:
+            return NAV_BACK
         if value:
             return value
         print("不能为空。")
@@ -351,12 +373,14 @@ def platform_label(platform_value: str) -> str:
     return "macOS" if platform_value == PLATFORM_MAC else "Windows"
 
 
-def ask_project_platform() -> str:
+def ask_project_platform() -> str | object:
     detected = detect_platform()
     if detected:
         print(f"已识别当前系统: {platform_label(detected)}")
         while True:
             raw = prompt_text("项目运行系统(mac/windows)", detected).strip()
+            if raw == BACK_COMMAND:
+                return NAV_BACK
             if not raw:
                 return detected
             normalized = normalize_platform(raw)
@@ -367,21 +391,28 @@ def ask_project_platform() -> str:
     while True:
         print("1. macOS")
         print("2. Windows")
+        print(f"0. 取消录入（也可输入 {BACK_COMMAND}）")
         choice = prompt_text("请选择").strip()
         if choice == "1":
             return PLATFORM_MAC
         if choice == "2":
             return PLATFORM_WINDOWS
+        if choice in {"0", BACK_COMMAND}:
+            return NAV_BACK
         print("无效选择。")
 
 
-def ask_environment_commands(env_name: str) -> dict[str, list[str]]:
+def ask_environment_commands(env_name: str) -> dict[str, list[str]] | object:
     commands = ask_command_lines(f"{env_name} 执行目标命令")
+    if commands is NAV_BACK:
+        return NAV_BACK
     return {COMMAND_KEY: commands} if commands else {}
 
 
-def ask_target_names() -> list[str]:
+def ask_target_names() -> list[str] | object:
     raw = prompt_text("执行目标名称，多个用逗号分隔，默认 默认", DEFAULT_TARGET_NAME).strip()
+    if raw == BACK_COMMAND:
+        return NAV_BACK
     names = [item.strip() for item in raw.split(",") if item.strip()]
     unique_names: list[str] = []
     for name in names or [DEFAULT_TARGET_NAME]:
@@ -390,12 +421,14 @@ def ask_target_names() -> list[str]:
     return unique_names
 
 
-def ask_command_lines(label: str = "命令") -> list[str]:
-    print(f"{label}逐行输入，空行结束。")
+def ask_command_lines(label: str = "命令") -> list[str] | object:
+    print(f"{label}逐行输入，空行结束；输入 {BACK_COMMAND} 取消当前录入。")
     commands: list[str] = []
     while True:
         prompt = f"命令[{len(commands) + 1}]"
         raw = prompt_text(prompt)
+        if raw.strip() == BACK_COMMAND:
+            return NAV_BACK
         if not raw.strip():
             break
         commands.append(raw.rstrip())
@@ -414,6 +447,11 @@ def find_service(project: dict[str, Any], service_id: str) -> dict[str, Any] | N
         if service.get("id") == service_id:
             return service
     return None
+
+
+def reload_project(project_id: str) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    projects = load_projects()
+    return projects, find_project(projects, project_id)
 
 
 def service_targets(service: dict[str, Any]) -> dict[str, Any]:
@@ -439,71 +477,90 @@ def ordered_target_names(service: dict[str, Any]) -> list[str]:
     return ordered
 
 
-def select_project(projects: dict[str, Any]) -> dict[str, Any] | None:
+def select_project(projects: dict[str, Any]) -> dict[str, Any] | object:
     items = projects.get("projects") or []
     if not items:
         print("还没有项目配置。")
-        return None
-    for idx, project in enumerate(items, 1):
-        print(f"{idx}. {project.get('name')} ({project.get('id')})")
-    choice = prompt_text("请选择项目").strip()
-    if not choice.isdigit() or not 1 <= int(choice) <= len(items):
-        print("无效项目。")
-        return None
-    return items[int(choice) - 1]
+        return NO_CONFIG
+    while True:
+        print("\n==== 项目列表 ====")
+        for idx, project in enumerate(items, 1):
+            print(f"{idx}. {project.get('name')} ({project.get('id')})")
+        print("0. 返回上一级")
+        choice = prompt_text("请选择项目").strip()
+        if choice == "0":
+            return NAV_BACK
+        if not choice.isdigit() or not 1 <= int(choice) <= len(items):
+            print("无效项目。")
+            continue
+        return items[int(choice) - 1]
 
 
 def view_project_flow(projects: dict[str, Any]) -> None:
     project = select_project(projects)
-    if not project:
+    if project is NAV_BACK or project is NO_CONFIG:
         return
     print(f"项目配置文件: {active_projects_file()}")
     print(render_project_details(project))
 
 
-def delete_config_flow(projects: dict[str, Any]) -> None:
-    print("1. 删除整个项目")
-    print("2. 删除项目里的子任务")
-    print("3. 删除环境下保存的命令")
-    choice = prompt_text("请选择删除类型").strip()
-    if choice == "1":
-        delete_project_flow(projects)
-    elif choice == "2":
-        delete_service_flow(projects)
-    elif choice == "3":
-        delete_action_commands_flow(projects)
-    else:
+def delete_config_flow(projects: dict[str, Any], project: dict[str, Any] | None = None) -> object | None:
+    while True:
+        print("\n==== 删除已录入内容 ====")
+        print("1. 删除整个项目")
+        print("2. 删除项目里的子任务")
+        print("3. 删除执行目标下保存的命令")
+        print("0. 返回上一级")
+        choice = prompt_text("请选择删除类型").strip()
+        if choice == "1":
+            return delete_project_flow(projects, project)
+        if choice == "2":
+            delete_service_flow(projects, project)
+            return None
+        if choice == "3":
+            delete_action_commands_flow(projects, project)
+            return None
+        if choice == "0":
+            return NAV_BACK
         print("无效选择。")
 
 
-def select_service(project: dict[str, Any]) -> dict[str, Any] | None:
+def select_service(project: dict[str, Any]) -> dict[str, Any] | object:
     services = project_services(project)
     if not services:
         print("项目下没有服务配置。")
-        return None
-    for idx, service in enumerate(services, 1):
-        print(f"{idx}. {service.get('name')} ({service.get('id')})")
-    choice = prompt_text("请选择服务").strip()
-    if not choice.isdigit() or not 1 <= int(choice) <= len(services):
-        print("无效服务。")
-        return None
-    return services[int(choice) - 1]
+        return NO_CONFIG
+    while True:
+        print("\n==== 服务列表 ====")
+        for idx, service in enumerate(services, 1):
+            print(f"{idx}. {service.get('name')} ({service.get('id')})")
+        print("0. 返回上一级")
+        choice = prompt_text("请选择服务").strip()
+        if choice == "0":
+            return NAV_BACK
+        if not choice.isdigit() or not 1 <= int(choice) <= len(services):
+            print("无效服务。")
+            continue
+        return services[int(choice) - 1]
 
 
-def select_action(commands: dict[str, list[str]]) -> str | None:
+def select_action(commands: dict[str, list[str]], empty_message: str = "当前环境没有可删除的命令。") -> str | object:
     actions = available_actions(commands)
     if not actions:
-        print("当前环境没有可删除的命令。")
-        return None
-    if actions == [COMMAND_KEY]:
-        return COMMAND_KEY
-    for idx, action in enumerate(actions, 1):
-        print(f"{idx}. {action_label(action)}")
-    choice = prompt_text("请选择要删除的命令组").strip()
-    if not choice.isdigit() or not 1 <= int(choice) <= len(actions):
-        print("无效动作。")
-        return None
-    return actions[int(choice) - 1]
+        print(empty_message)
+        return NO_CONFIG
+    while True:
+        print("\n==== 命令动作 ====")
+        for idx, action in enumerate(actions, 1):
+            print(f"{idx}. {action_label(action)}")
+        print("0. 返回上一级")
+        choice = prompt_text("请选择命令动作").strip()
+        if choice == "0":
+            return NAV_BACK
+        if not choice.isdigit() or not 1 <= int(choice) <= len(actions):
+            print("无效动作。")
+            continue
+        return actions[int(choice) - 1]
 
 
 def available_actions(commands: dict[str, list[str]]) -> list[str]:
@@ -585,52 +642,94 @@ def action_label(action: str) -> str:
     return "执行" if action == COMMAND_KEY else action
 
 
-def select_environment(project: dict[str, Any], default: str = "test") -> tuple[str, dict[str, Any]] | None:
+def select_environment(project: dict[str, Any], default: str = "test") -> tuple[str, dict[str, Any]] | object:
     envs = service_targets(project)
     available = ordered_target_names(project)
     if not available:
         print("项目未配置执行目标。")
-        return None
-    for idx, env in enumerate(available, 1):
-        mark = "默认" if env == default else ""
-        print(f"{idx}. {env} {mark}")
-    choice = prompt_text("请选择执行目标").strip()
-    if not choice:
-        choice = str(available.index(default) + 1) if default in available else "1"
-    if not choice.isdigit() or not 1 <= int(choice) <= len(available):
-        print("无效环境。")
-        return None
-    env_name = available[int(choice) - 1]
-    return env_name, envs[env_name]
+        return NO_CONFIG
+    while True:
+        print("\n==== 执行目标 ====")
+        for idx, env in enumerate(available, 1):
+            mark = " 默认" if env == default else ""
+            print(f"{idx}. {env}{mark}")
+        print("0. 返回上一级")
+        choice = prompt_text("请选择执行目标").strip()
+        if choice == "0":
+            return NAV_BACK
+        if not choice.isdigit() or not 1 <= int(choice) <= len(available):
+            print("无效执行目标。")
+            continue
+        env_name = available[int(choice) - 1]
+        return env_name, envs[env_name]
 
 
-def project_flow(settings: dict[str, Any], projects: dict[str, Any]) -> None:
-    project = select_project(projects)
-    if not project:
-        return
-    service = select_service(project)
-    if not service:
-        return
-    selected = select_environment(service, settings.get("app", {}).get("default_environment", "test"))
-    if not selected:
-        return
-    env_name, env_cfg = selected
-    commands = env_cfg.get("commands") or {}
-    actions = available_actions(commands)
-    if not actions:
-        print("该环境没有可执行命令。")
-        return
-    if actions == [COMMAND_KEY]:
-        execute_action(project, service, env_name, env_cfg, COMMAND_KEY, commands[COMMAND_KEY], settings)
-        return
-    for idx, action in enumerate(actions, 1):
-        print(f"{idx}. {action_label(action)}")
-    choice = prompt_text("请选择要执行的命令组").strip()
-    if not choice.isdigit() or not 1 <= int(choice) <= len(actions):
-        print("无效动作。")
-        return
-    action = actions[int(choice) - 1]
-    execute_action(project, service, env_name, env_cfg, action, commands[action], settings)
+def project_list_loop(settings: dict[str, Any]) -> None:
+    while True:
+        projects = load_projects()
+        project = select_project(projects)
+        if project is NAV_BACK:
+            return
+        if project is NO_CONFIG:
+            return
+        current_project_menu(settings, str(project.get("id")))
+
+
+def current_project_menu(settings: dict[str, Any], project_id: str) -> None:
+    while True:
+        projects, project = reload_project(project_id)
+        if not project:
+            print(f"项目已不存在: {project_id}")
+            return
+        print(f"\n==== 当前项目: {project.get('name')} ({project.get('id')}) ====")
+        print("1. 执行服务命令")
+        print("2. 服务状态检查")
+        print("3. 新增服务")
+        print("4. 查看项目配置")
+        print("5. 删除已录入内容")
+        print("0. 返回项目列表")
+        choice = prompt_text("请选择").strip()
+        if choice == "1":
+            project_flow(settings, project)
+        elif choice == "2":
+            status_flow(settings, projects, project)
+        elif choice == "3":
+            append_services_to_project(project, settings)
+            save_projects(projects)
+            print(f"已保存项目配置: {PROJECTS_LOCAL_FILE}")
+        elif choice == "4":
+            print(f"项目配置文件: {active_projects_file()}")
+            print(render_project_details(project))
+        elif choice == "5":
+            result = delete_config_flow(projects, project)
+            if result is PROJECT_DELETED:
+                return
+        elif choice == "0":
+            return
+        else:
+            print("无效选择。")
+
+
+def project_flow(settings: dict[str, Any], project: dict[str, Any]) -> None:
+    while True:
+        service = select_service(project)
+        if service is NAV_BACK or service is NO_CONFIG:
+            return
+        while True:
+            selected = select_environment(service, settings.get("app", {}).get("default_environment", "test"))
+            if selected is NAV_BACK:
+                break
+            if selected is NO_CONFIG:
+                break
+            env_name, env_cfg = selected
+            commands = env_cfg.get("commands") or {}
+            action = select_action(commands, "该执行目标没有可执行命令。")
+            if action is NAV_BACK:
+                continue
+            if action is NO_CONFIG:
+                continue
+            execute_action(project, service, env_name, env_cfg, action, commands[action], settings)
+            return
 
 
 def execute_action(
@@ -1135,13 +1234,13 @@ def import_temp_secrets() -> dict[str, str]:
 
 def git_flow(settings: dict[str, Any], projects: dict[str, Any]) -> None:
     project = select_project(projects)
-    if not project:
+    if project is NAV_BACK or project is NO_CONFIG:
         return
     service = select_service(project)
-    if not service:
+    if service is NAV_BACK or service is NO_CONFIG:
         return
     selected = select_environment(service, settings.get("app", {}).get("default_environment", "test"))
-    if not selected:
+    if selected is NAV_BACK or selected is NO_CONFIG:
         return
     env_name, env_cfg = selected
     repo = derive_repo_from_commands(env_cfg)
@@ -1227,29 +1326,34 @@ def is_worktree_dirty(repo: str) -> bool:
     return bool(proc.stdout.strip())
 
 
-def status_flow(settings: dict[str, Any], projects: dict[str, Any]) -> None:
-    project = select_project(projects)
-    if not project:
-        return
-    service = select_service(project)
-    if not service:
-        return
-    selected = select_environment(service, settings.get("app", {}).get("default_environment", "test"))
-    if not selected:
-        return
-    env_name, env_cfg = selected
-    print(f"项目: {project.get('name')} 服务: {service.get('name')} 执行目标: {env_name}")
-    status_commands = env_cfg.get("status_commands") or []
-    if not status_commands:
-        print("当前环境还没有状态检查命令。")
-        status_commands = ask_command_lines(f"{env_name} 执行目标状态检查命令")
-        if not status_commands:
-            print("未录入状态检查命令。")
+def status_flow(settings: dict[str, Any], projects: dict[str, Any], project: dict[str, Any]) -> None:
+    while True:
+        service = select_service(project)
+        if service is NAV_BACK or service is NO_CONFIG:
             return
-        env_cfg["status_commands"] = status_commands
-        save_projects(projects)
-        print(f"已保存状态检查命令到: {PROJECTS_LOCAL_FILE}")
-    execute_status_commands(project, service, env_name, env_cfg, status_commands, settings)
+        while True:
+            selected = select_environment(service, settings.get("app", {}).get("default_environment", "test"))
+            if selected is NAV_BACK:
+                break
+            if selected is NO_CONFIG:
+                break
+            env_name, env_cfg = selected
+            print(f"项目: {project.get('name')} 服务: {service.get('name')} 执行目标: {env_name}")
+            status_commands = env_cfg.get("status_commands") or []
+            if not status_commands:
+                print("当前环境还没有状态检查命令。")
+                status_commands = ask_command_lines(f"{env_name} 执行目标状态检查命令")
+                if status_commands is NAV_BACK:
+                    print("已取消状态检查命令录入。")
+                    return
+                if not status_commands:
+                    print("未录入状态检查命令。")
+                    return
+                env_cfg["status_commands"] = status_commands
+                save_projects(projects)
+                print(f"已保存状态检查命令到: {PROJECTS_LOCAL_FILE}")
+            execute_status_commands(project, service, env_name, env_cfg, status_commands, settings)
+            return
 
 
 def execute_status_commands(
@@ -1285,24 +1389,31 @@ def extract_repo_from_command(command: str) -> str:
     return path
 
 
-def delete_project_flow(projects: dict[str, Any]) -> None:
-    project = select_project(projects)
-    if not project:
-        return
+def delete_project_flow(projects: dict[str, Any], project: dict[str, Any] | None = None) -> object | None:
+    if project is None:
+        selected = select_project(projects)
+        if selected is NAV_BACK or selected is NO_CONFIG:
+            return selected
+        project = selected
+    print(f"准备删除项目: {project.get('name')} ({project.get('id')})")
+    print("删除项目会一并删除该项目下所有服务和执行目标配置。")
     if not strong_confirm(project["id"], "local", "delete-project"):
         return
     items = projects.get("projects") or []
     projects["projects"] = [item for item in items if item.get("id") != project.get("id")]
     save_projects(projects)
     print(f"已删除项目: {project.get('name')} ({project.get('id')})")
+    return PROJECT_DELETED
 
 
-def delete_service_flow(projects: dict[str, Any]) -> None:
-    project = select_project(projects)
-    if not project:
-        return
+def delete_service_flow(projects: dict[str, Any], project: dict[str, Any] | None = None) -> None:
+    if project is None:
+        selected = select_project(projects)
+        if selected is NAV_BACK or selected is NO_CONFIG:
+            return
+        project = selected
     service = select_service(project)
-    if not service:
+    if service is NAV_BACK or service is NO_CONFIG:
         return
     if not strong_confirm(f"{project['id']}/{service['id']}", "local", "delete-service"):
         return
@@ -1315,26 +1426,35 @@ def delete_service_flow(projects: dict[str, Any]) -> None:
     raise ConfigError("旧版单服务配置不能直接删除子任务，请删除整个项目后重新录入。")
 
 
-def delete_action_commands_flow(projects: dict[str, Any]) -> None:
-    project = select_project(projects)
-    if not project:
-        return
-    service = select_service(project)
-    if not service:
-        return
-    selected = select_environment(service)
-    if not selected:
-        return
-    env_name, env_cfg = selected
-    commands = env_cfg.get("commands") or {}
-    action = select_action(commands)
-    if not action:
-        return
-    if not strong_confirm(f"{project['id']}/{service['id']}", env_name, f"delete-{action_label(action)}"):
-        return
-    commands.pop(action, None)
-    save_projects(projects)
-    print(f"已删除 {service.get('name')} {env_name} 执行目标下的 {action} 命令。")
+def delete_action_commands_flow(projects: dict[str, Any], project: dict[str, Any] | None = None) -> None:
+    if project is None:
+        selected_project = select_project(projects)
+        if selected_project is NAV_BACK or selected_project is NO_CONFIG:
+            return
+        project = selected_project
+    while True:
+        service = select_service(project)
+        if service is NAV_BACK or service is NO_CONFIG:
+            return
+        while True:
+            selected = select_environment(service)
+            if selected is NAV_BACK:
+                break
+            if selected is NO_CONFIG:
+                break
+            env_name, env_cfg = selected
+            commands = env_cfg.get("commands") or {}
+            action = select_action(commands)
+            if action is NAV_BACK:
+                continue
+            if action is NO_CONFIG:
+                continue
+            if not strong_confirm(f"{project['id']}/{service['id']}", env_name, f"delete-{action_label(action)}"):
+                return
+            commands.pop(action, None)
+            save_projects(projects)
+            print(f"已删除 {service.get('name')} {env_name} 执行目标下的 {action} 命令。")
+            return
 
 
 if __name__ == "__main__":

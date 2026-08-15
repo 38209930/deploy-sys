@@ -5,7 +5,9 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
+from io import StringIO
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -157,6 +159,136 @@ class CommandRunnerTests(IsolatedWorkspace):
         second = deploysys.CommandRunner(self.settings(), {})
         self.assertEqual(result.exit_code, deploysys.COMMAND_IDLE_TIMEOUT_EXIT_CODE)
         self.assertNotEqual(first.log_path, second.log_path)
+
+
+class CliNavigationTests(IsolatedWorkspace):
+    def setUp(self):
+        super().setUp()
+        self.settings = {"app": {"default_environment": "prod"}, "safety": {"stop_on_command_failure": True}}
+        deploysys.save_projects(
+            {
+                "projects": [
+                    {
+                        "id": "apollo",
+                        "name": "Apollo",
+                        "services": [
+                            {
+                                "id": "admin-pc",
+                                "name": "后台管理系统",
+                                "targets": {
+                                    "prod": {
+                                        "commands": {
+                                            "run": [self.print_command("deploy-ok")],
+                                        }
+                                    }
+                                },
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+
+    @staticmethod
+    def print_command(text):
+        return f'Write-Output "{text}"' if os.name == "nt" else f'printf "{text}"'
+
+    def run_with_inputs(self, func, inputs):
+        iterator = iter(inputs)
+
+        def fake_prompt(_message, default=""):
+            try:
+                return next(iterator)
+            except StopIteration:
+                self.fail("测试输入不足，菜单没有按预期返回。")
+
+        output = StringIO()
+        with patch("deploysys.prompt_text", side_effect=fake_prompt), redirect_stdout(output):
+            func()
+        return output.getvalue()
+
+    def test_execution_returns_to_current_project_menu(self):
+        projects = deploysys.load_projects()
+        project = deploysys.find_project(projects, "apollo")
+        with patch("deploysys.execute_action") as execute:
+            output = self.run_with_inputs(
+                lambda: deploysys.current_project_menu(self.settings, project["id"]),
+                ["1", "1", "1", "1", "0"],
+            )
+        execute.assert_called_once()
+        self.assertGreaterEqual(output.count("==== 当前项目: Apollo (apollo) ===="), 2)
+
+    def test_target_back_returns_to_service_list_before_project_menu(self):
+        output = self.run_with_inputs(
+            lambda: deploysys.current_project_menu(self.settings, "apollo"),
+            ["1", "1", "0", "0", "0"],
+        )
+        self.assertGreaterEqual(output.count("==== 服务列表 ===="), 2)
+        self.assertGreaterEqual(output.count("==== 当前项目: Apollo (apollo) ===="), 2)
+
+    def test_invalid_service_choice_stays_in_service_menu(self):
+        output = self.run_with_inputs(
+            lambda: deploysys.current_project_menu(self.settings, "apollo"),
+            ["1", "9", "0", "0"],
+        )
+        self.assertIn("无效服务。", output)
+        self.assertGreaterEqual(output.count("==== 服务列表 ===="), 2)
+
+    def test_status_command_save_returns_to_current_project_menu(self):
+        with patch("deploysys.execute_status_commands") as execute_status:
+            output = self.run_with_inputs(
+                lambda: deploysys.current_project_menu(self.settings, "apollo"),
+                ["2", "1", "1", self.print_command("status-ok"), "", "0"],
+            )
+        execute_status.assert_called_once()
+        projects = deploysys.load_projects()
+        project = deploysys.find_project(projects, "apollo")
+        service = deploysys.find_service(project, "admin-pc")
+        self.assertEqual(service["targets"]["prod"]["status_commands"], [self.print_command("status-ok")])
+        self.assertGreaterEqual(output.count("==== 当前项目: Apollo (apollo) ===="), 2)
+
+    def test_add_service_reloads_project_before_next_render(self):
+        def append_service(project, _settings):
+            project["services"].append(
+                {
+                    "id": "worker",
+                    "name": "定时服务",
+                    "targets": {"prod": {"commands": {"run": [self.print_command("worker")]}}},
+                }
+            )
+
+        with patch("deploysys.append_services_to_project", side_effect=append_service):
+            output = self.run_with_inputs(
+                lambda: deploysys.current_project_menu(self.settings, "apollo"),
+                ["3", "4", "0"],
+            )
+        self.assertIn("定时服务 (worker)", output)
+
+    def test_delete_service_keeps_current_project_context(self):
+        with patch("deploysys.strong_confirm", return_value=True):
+            output = self.run_with_inputs(
+                lambda: deploysys.current_project_menu(self.settings, "apollo"),
+                ["5", "2", "1", "4", "0"],
+            )
+        projects = deploysys.load_projects()
+        project = deploysys.find_project(projects, "apollo")
+        self.assertEqual(project["services"], [])
+        self.assertIn("子任务: 无", output)
+        self.assertGreaterEqual(output.count("==== 当前项目: Apollo (apollo) ===="), 2)
+
+    def test_delete_project_returns_to_project_list(self):
+        projects = deploysys.load_projects()
+        projects["projects"].append({"id": "mall", "name": "Mall", "services": []})
+        deploysys.save_projects(projects)
+        with patch("deploysys.strong_confirm", return_value=True):
+            output = self.run_with_inputs(
+                lambda: deploysys.project_list_loop(self.settings),
+                ["1", "5", "1", "0"],
+            )
+        projects = deploysys.load_projects()
+        self.assertIsNone(deploysys.find_project(projects, "apollo"))
+        self.assertIsNotNone(deploysys.find_project(projects, "mall"))
+        self.assertGreaterEqual(output.count("==== 项目列表 ===="), 2)
 
 
 class ApiTests(IsolatedWorkspace):
