@@ -167,3 +167,19 @@ projects:
 python3 -m unittest discover -s tests
 python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 ```
+
+## DDMP 同源 Java API 发布
+
+`scripts/deploy-ddmp-family-api.sh` 用于 DDMP 同源 Java API 的本机受控发布。它固定从本机 `release` 分支构建，不依赖服务器源码目录或历史 `de-api-test.sh`。
+
+发布流程包含以下门禁：
+
+- 本机仓库必须干净，且 `HEAD` 与 `origin/release` 完全一致。
+- 使用 JDK 8 执行 Maven 完整测试和打包。
+- 新 jar 先上传为唯一临时文件，并核对本地与服务器 SHA-256。
+- 只允许存在一个目标 Java 进程；目标端口若被其他进程占用则拒绝发布。
+- 使用 `TERM` 等待旧进程退出，不执行强制终止。
+- 原 jar 保存到服务器 `backups/` 后再原子替换；新进程验收失败时自动恢复备份。
+- 启动参数固定使用 `prod`，端口沿用应用现有配置；验收同时检查进程数、端口归属、HTTP 响应和运行 jar SHA-256。
+
+真实仓库路径、SSH 配置入口和公网探测地址保存在忽略提交的 `config/projects.local.yaml`，不写入公开配置。deploySys 中分别选择对应项目的 `API -> prod` 执行发布，使用“状态检查”做只读验收。
