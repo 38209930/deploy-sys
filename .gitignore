@@ -1,4 +1,5 @@
 config/secrets*
+config/*known-hosts*
 config/projects.local.yaml
 logs/
 data/local*

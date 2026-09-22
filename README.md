@@ -168,3 +168,17 @@ python3 -m unittest discover -s tests
 python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 ```
 
+## M1X API / Worker 分离版发布
+
+`scripts/deploy-m1x-api-systemd.sh` 用于发布 API/Worker 分离后的 M1X API。脚本只操作 `m1x-api.service`，不会启动、停止或重启 Worker；Worker 状态只作为验收信息输出。
+
+发布流程包含以下门禁：
+
+- 本地工作树必须干净，当前分支必须与指定远端分支一致；可用 `M1X_EXPECTED_COMMIT` 锁定批准部署的 commit。
+- 使用 JDK 8 执行 `mvn clean verify`，测试成功后才上传 API Jar。
+- 使用已固化的 SSH 主机指纹连接，不接受未知或变化后的主机密钥。
+- 上传后校验 SHA-256，备份当前 Jar，再通过 systemd 替换并启动。
+- 验收 `/actuator/health`、8080 端口归属、运行 Jar 哈希和 API 日志无调度标记。
+- 验收失败时停止新 API、恢复旧 Jar 并启动旧 API，然后以失败状态退出；不会自动重复发布。
+
+deploySys 本机私有配置中的 `M1X -> m1x-new -> prod` 已接入该脚本，原有 `M1X Java API` 入口保持不变。状态检查只读取 API/Worker 状态、健康结果、端口归属、Jar 哈希和调度日志计数，不输出生产配置。
