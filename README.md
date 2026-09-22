@@ -188,3 +188,5 @@ deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new ->
 `scripts/deploy-etbst-api-systemd.sh` 复用相同的安全发布流程，发布 ETBST 的 `etbst-api.service` 并检查 8060 端口。ETBST 同样尚未拆分定时任务，旧实例必须在新实例启动前退出。
 
 `scripts/deploy-ddmp-api-systemd.sh` 发布 DDMP 的 `ddmp-api.service` 并检查 8050 端口。DDMP 尚未拆分定时任务，切换时同样禁止新旧实例重叠运行。
+
+`scripts/deploy-vet-api-systemd.sh` 发布 VET 的 `vet-api.service` 并检查 8040 端口。VET 包含高频定时任务，发布前必须确认旧实例已经退出。
