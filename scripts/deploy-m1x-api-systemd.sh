@@ -177,11 +177,11 @@ cleanup_stage() {
 }
 trap cleanup_stage EXIT
 
-[ -f "$remote_config" ] || { echo "ERROR: production config is missing" >&2; exit 1; }
+sudo test -f "$remote_config" || { echo "ERROR: production config is missing" >&2; exit 1; }
 [ -f "$remote_stage" ] || { echo "ERROR: staged jar is missing" >&2; exit 1; }
 stage_sha="$(sha256sum "$remote_stage" | awk '{print $1}')"
 [ "$stage_sha" = "$expected_sha" ] || { echo "ERROR: staged jar SHA-256 mismatch" >&2; exit 1; }
-[ -f "$remote_jar" ] || { echo "ERROR: current API jar is missing" >&2; exit 1; }
+sudo test -f "$remote_jar" || { echo "ERROR: current API jar is missing" >&2; exit 1; }
 
 sudo mkdir -p "$backup_dir"
 sudo cp -p "$remote_jar" "$backup"

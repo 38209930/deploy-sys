@@ -380,6 +380,11 @@ class CompatibilityTests(unittest.TestCase):
         self.assertIn('git -C "$REPO_DIR" rev-parse --is-inside-work-tree', script)
         self.assertNotIn('[ -d "$REPO_DIR/.git" ]', script)
 
+    def test_m1x_remote_checks_protected_files_with_sudo(self):
+        script = (Path(__file__).resolve().parents[1] / "scripts" / "deploy-m1x-api-systemd.sh").read_text(encoding="utf-8")
+        self.assertIn('sudo test -f "$remote_config"', script)
+        self.assertIn('sudo test -f "$remote_jar"', script)
+
 
 if __name__ == "__main__":
     unittest.main()
