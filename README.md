@@ -184,3 +184,5 @@ python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new -> prod` 只构建、发布和检查 API；`M1X -> m1x-worker-new -> prod` 只构建、发布、重启和检查 Worker。Worker 发布采用单实例停机替换，验收失败时恢复上一版 Jar。
 
 `scripts/deploy-stop-api-systemd.sh` 用于向新 ECS 发布未拆分 Worker 的 STOP API，固定检查 `stop-api.service` 与 8070 端口。发布时先备份当前 Jar，再停服替换并启动；HTTP 或哈希验收失败会恢复上一版。由于定时任务仍在 API 内，切换服务器前必须确保旧实例已停止，禁止新旧实例重叠运行。
+
+`scripts/deploy-etbst-api-systemd.sh` 复用相同的安全发布流程，发布 ETBST 的 `etbst-api.service` 并检查 8060 端口。ETBST 同样尚未拆分定时任务，旧实例必须在新实例启动前退出。

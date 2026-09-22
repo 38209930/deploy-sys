@@ -11,6 +11,7 @@ BRANCH="${STOP_BRANCH:-release}"
 EXPECTED_COMMIT="${STOP_EXPECTED_COMMIT:-}"
 JAVA8_HOME="${STOP_JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-8.jdk/Contents/Home}"
 REMOTE_JAR="${STOP_REMOTE_JAR:-/home/stop-api/app/stop-api.jar}"
+REMOTE_GROUP="${STOP_REMOTE_GROUP:-stop-api}"
 API_SERVICE="${STOP_API_SERVICE:-stop-api.service}"
 HEALTH_PORT="${STOP_HEALTH_PORT:-8070}"
 READY_ATTEMPTS="${STOP_READY_ATTEMPTS:-30}"
@@ -77,17 +78,17 @@ build_api() {
 
 remote_deploy() {
   scp "${SSH_OPTIONS[@]}" "$LOCAL_JAR" "$SSH_TARGET:$REMOTE_STAGE"
-  if ! ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" bash -s -- "$API_SERVICE" "$REMOTE_JAR" "$REMOTE_STAGE" "$LOCAL_SHA" "$RELEASE_ID" "$HEALTH_PORT" "$READY_ATTEMPTS" <<'REMOTE'
+  if ! ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" bash -s -- "$API_SERVICE" "$REMOTE_JAR" "$REMOTE_GROUP" "$REMOTE_STAGE" "$LOCAL_SHA" "$RELEASE_ID" "$HEALTH_PORT" "$READY_ATTEMPTS" <<'REMOTE'
 set -euo pipefail
-service="$1"; jar="$2"; stage="$3"; expected_sha="$4"; release_id="$5"; port="$6"; attempts="$7"
+service="$1"; jar="$2"; group="$3"; stage="$4"; expected_sha="$5"; release_id="$6"; port="$7"; attempts="$8"
 backup_dir="$(dirname "$jar")/backups"; backup="$backup_dir/$(basename "$jar").${release_id}.bak"
 trap '[ ! -e "$stage" ] || unlink "$stage"' EXIT
 [ "$(sha256sum "$stage" | awk '{print $1}')" = "$expected_sha" ] || { echo "ERROR: staged jar SHA-256 mismatch" >&2; exit 1; }
 sudo test -f "$jar" || { echo "ERROR: current API jar is missing" >&2; exit 1; }
-sudo install -d -o root -g stop-api -m 0750 "$backup_dir"
+sudo install -d -o root -g "$group" -m 0750 "$backup_dir"
 sudo cp -p "$jar" "$backup"
 sudo systemctl stop "$service"
-sudo install -o root -g stop-api -m 0640 "$stage" "$jar"
+sudo install -o root -g "$group" -m 0640 "$stage" "$jar"
 rollback() { echo "API validation failed; restoring previous jar" >&2; sudo systemctl stop "$service" || true; sudo cp -p "$backup" "$jar"; sudo systemctl start "$service"; }
 sudo systemctl start "$service"
 ready=no
