@@ -190,3 +190,5 @@ deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new ->
 `scripts/deploy-ddmp-api-systemd.sh` 发布 DDMP 的 `ddmp-api.service` 并检查 8050 端口。DDMP 尚未拆分定时任务，切换时同样禁止新旧实例重叠运行。
 
 `scripts/deploy-vet-api-systemd.sh` 发布 VET 的 `vet-api.service` 并检查 8040 端口。VET 包含高频定时任务，发布前必须确认旧实例已经退出。
+
+`scripts/deploy-dgye-api-systemd.sh` 发布 DGYE 的 `dgye-api.service` 并检查 8030 端口。DGYE 尚未拆分定时任务，切换时禁止新旧实例重叠运行。
