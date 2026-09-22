@@ -118,9 +118,10 @@ REMOTE
 
 build_api() {
   require_value M1X_REPO_DIR "$REPO_DIR"
-  [ -d "$REPO_DIR/.git" ] || fail "M1X repository/worktree not found: $REPO_DIR"
-  [ -x "$JAVA8_HOME/bin/java" ] || fail "JDK 8 not found: $JAVA8_HOME"
   require_command git
+  git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+    || fail "M1X repository/worktree not found: $REPO_DIR"
+  [ -x "$JAVA8_HOME/bin/java" ] || fail "JDK 8 not found: $JAVA8_HOME"
   require_command mvn
   require_command sha256sum
 

@@ -375,6 +375,11 @@ class CompatibilityTests(unittest.TestCase):
         service = {"targets": {"prod": {}, "custom": {}, "默认": {}}}
         self.assertEqual(deploysys.ordered_target_names(service), ["默认", "prod", "custom"])
 
+    def test_m1x_deploy_accepts_git_worktrees(self):
+        script = (Path(__file__).resolve().parents[1] / "scripts" / "deploy-m1x-api-systemd.sh").read_text(encoding="utf-8")
+        self.assertIn('git -C "$REPO_DIR" rev-parse --is-inside-work-tree', script)
+        self.assertNotIn('[ -d "$REPO_DIR/.git" ]', script)
+
 
 if __name__ == "__main__":
     unittest.main()
