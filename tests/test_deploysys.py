@@ -393,8 +393,10 @@ class CompatibilityTests(unittest.TestCase):
         self.assertNotIn("m1x-worker.service", api_script)
         self.assertIn("-pl train-worker -am clean verify", worker_script)
         self.assertNotIn("m1x-api.service", worker_script)
-        self.assertIn('worker_enabled" = "disabled', worker_script)
-        self.assertIn('worker_active" = "inactive', worker_script)
+        self.assertIn('worker_enabled" = "enabled', worker_script)
+        self.assertIn('worker_active" = "active', worker_script)
+        self.assertIn('sudo systemctl stop "$worker_service"', worker_script)
+        self.assertIn("rollback()", worker_script)
 
 
 if __name__ == "__main__":
