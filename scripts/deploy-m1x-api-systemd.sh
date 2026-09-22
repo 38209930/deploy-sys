@@ -13,7 +13,6 @@ JAVA8_HOME="${M1X_JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-8.jdk/Con
 REMOTE_JAR="${M1X_REMOTE_JAR:-/home/api/app/m1x-api.jar}"
 REMOTE_CONFIG="${M1X_REMOTE_CONFIG:-/home/api/config/application-prod.yml}"
 API_SERVICE="${M1X_API_SERVICE:-m1x-api.service}"
-WORKER_SERVICE="${M1X_WORKER_SERVICE:-m1x-worker.service}"
 HEALTH_PORT="${M1X_HEALTH_PORT:-8080}"
 HEALTH_PATH="${M1X_HEALTH_PATH:-/actuator/health}"
 READY_ATTEMPTS="${M1X_READY_ATTEMPTS:-30}"
@@ -62,23 +61,18 @@ init_connection() {
 
 remote_status() {
   ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" bash -s -- \
-    "$API_SERVICE" "$WORKER_SERVICE" "$REMOTE_JAR" "$HEALTH_PORT" "$HEALTH_PATH" <<'REMOTE'
+    "$API_SERVICE" "$REMOTE_JAR" "$HEALTH_PORT" "$HEALTH_PATH" <<'REMOTE'
 set -euo pipefail
 api_service="$1"
-worker_service="$2"
-remote_jar="$3"
-health_port="$4"
-health_path="$5"
+remote_jar="$2"
+health_port="$3"
+health_path="$4"
 
 api_enabled="$(systemctl is-enabled "$api_service" 2>/dev/null || true)"
 api_active="$(systemctl is-active "$api_service" 2>/dev/null || true)"
-worker_enabled="$(systemctl is-enabled "$worker_service" 2>/dev/null || true)"
-worker_active="$(systemctl is-active "$worker_service" 2>/dev/null || true)"
 
 echo "api_enabled=$api_enabled"
 echo "api_active=$api_active"
-echo "worker_enabled=$worker_enabled"
-echo "worker_active=$worker_active"
 
 [ "$api_active" = "active" ] || exit 1
 health_body="$(curl -fsS --max-time 10 "http://127.0.0.1:${health_port}${health_path}")" || {
@@ -142,7 +136,7 @@ build_api() {
 
   (
     cd "$REPO_DIR"
-    JAVA_HOME="$JAVA8_HOME" PATH="$JAVA8_HOME/bin:$PATH" mvn -B -Dstyle.color=never clean verify
+    JAVA_HOME="$JAVA8_HOME" PATH="$JAVA8_HOME/bin:$PATH" mvn -B -Dstyle.color=never -pl train-web -am clean verify
   )
 
   LOCAL_JAR="$REPO_DIR/train-web/target/train-web-test-1.0.2.jar"
@@ -156,19 +150,18 @@ remote_deploy() {
   scp "${SSH_OPTIONS[@]}" "$LOCAL_JAR" "$SSH_TARGET:$REMOTE_STAGE"
 
   if ! ssh "${SSH_OPTIONS[@]}" "$SSH_TARGET" bash -s -- \
-    "$API_SERVICE" "$WORKER_SERVICE" "$REMOTE_JAR" "$REMOTE_CONFIG" \
+    "$API_SERVICE" "$REMOTE_JAR" "$REMOTE_CONFIG" \
     "$REMOTE_STAGE" "$LOCAL_SHA" "$RELEASE_ID" "$HEALTH_PORT" "$HEALTH_PATH" "$READY_ATTEMPTS" <<'REMOTE'
 set -euo pipefail
 api_service="$1"
-worker_service="$2"
-remote_jar="$3"
-remote_config="$4"
-remote_stage="$5"
-expected_sha="$6"
-release_id="$7"
-health_port="$8"
-health_path="$9"
-ready_attempts="${10}"
+remote_jar="$2"
+remote_config="$3"
+remote_stage="$4"
+expected_sha="$5"
+release_id="$6"
+health_port="$7"
+health_path="$8"
+ready_attempts="$9"
 backup_dir="$(dirname "$remote_jar")/backups"
 backup="$backup_dir/$(basename "$remote_jar").${release_id}.bak"
 

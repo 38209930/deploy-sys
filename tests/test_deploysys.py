@@ -385,6 +385,17 @@ class CompatibilityTests(unittest.TestCase):
         self.assertIn('sudo test -f "$remote_config"', script)
         self.assertIn('sudo test -f "$remote_jar"', script)
 
+    def test_m1x_api_and_worker_deployments_are_independent(self):
+        root = Path(__file__).resolve().parents[1]
+        api_script = (root / "scripts" / "deploy-m1x-api-systemd.sh").read_text(encoding="utf-8")
+        worker_script = (root / "scripts" / "deploy-m1x-worker-systemd.sh").read_text(encoding="utf-8")
+        self.assertIn("-pl train-web -am clean verify", api_script)
+        self.assertNotIn("m1x-worker.service", api_script)
+        self.assertIn("-pl train-worker -am clean verify", worker_script)
+        self.assertNotIn("m1x-api.service", worker_script)
+        self.assertIn('worker_enabled" = "disabled', worker_script)
+        self.assertIn('worker_active" = "inactive', worker_script)
+
 
 if __name__ == "__main__":
     unittest.main()

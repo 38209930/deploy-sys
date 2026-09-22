@@ -181,4 +181,4 @@ python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 - 验收 `/actuator/health`、8080 端口归属、运行 Jar 哈希和 API 日志无调度标记。
 - 验收失败时停止新 API、恢复旧 Jar 并启动旧 API，然后以失败状态退出；不会自动重复发布。
 
-deploySys 本机私有配置中的 `M1X -> m1x-new -> prod` 已接入该脚本，原有 `M1X Java API` 入口保持不变。状态检查只读取 API/Worker 状态、健康结果、端口归属、Jar 哈希和调度日志计数，不输出生产配置。
+deploySys 本机私有配置中已拆为两个独立入口：`M1X -> m1x-api-new -> prod` 只构建、发布和检查 API；`M1X -> m1x-worker-new（仅发布，不启动） -> prod` 只构建、发布和检查 Worker。原有 `M1X Java API` 入口保持不变。Worker 入口在暂缓启动期间强制要求服务保持 `disabled/inactive`。
