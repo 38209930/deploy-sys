@@ -728,7 +728,14 @@ def project_flow(settings: dict[str, Any], project: dict[str, Any]) -> None:
                 continue
             if action is NO_CONFIG:
                 continue
-            execute_action(project, service, env_name, env_cfg, action, commands[action], settings)
+            current_project = find_project(load_projects(), str(project.get("id")))
+            current_service = find_service(current_project, str(service.get("id"))) if current_project else None
+            current_target = service_targets(current_service).get(env_name) if current_service else None
+            current_commands = (current_target.get("commands") or {}).get(action) if isinstance(current_target, dict) else None
+            if current_commands != commands[action]:
+                print("项目命令配置已更新，请重新选择服务和执行目标后再运行。")
+                return
+            execute_action(current_project, current_service, env_name, current_target, action, current_commands, settings)
             return
 
 

@@ -43,6 +43,25 @@ class IsolatedWorkspace(unittest.TestCase):
 
 
 class ConfigStoreTests(IsolatedWorkspace):
+    def test_project_flow_rejects_command_changed_after_menu_opened(self):
+        project = {
+            "id": "mall",
+            "name": "Mall",
+            "services": [{"id": "api", "name": "API", "targets": {"prod": {"commands": {"run": ["echo old"]}}}}],
+        }
+        store = deploysys.projects_store()
+        store.mutate(0, lambda data: data["projects"].append(project))
+        stale_project = store.load().data["projects"][0]
+        store.mutate(None, lambda data: data["projects"][0]["services"][0]["targets"]["prod"]["commands"].update(run=["echo new"]))
+
+        with patch("deploysys.select_service", return_value=stale_project["services"][0]), \
+             patch("deploysys.select_environment", return_value=("prod", stale_project["services"][0]["targets"]["prod"])), \
+             patch("deploysys.select_action", return_value="run"), \
+             patch("deploysys.execute_action") as execute:
+            deploysys.project_flow({}, stale_project)
+
+        execute.assert_not_called()
+
     def test_legacy_project_is_migrated_with_backup(self):
         deploysys.PROJECTS_LOCAL_FILE.write_text(
             "projects:\n  - id: legacy\n    name: Legacy\n    environments:\n      prod:\n        commands:\n          deploy: [echo legacy]\n",
