@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -419,14 +420,64 @@ class CompatibilityTests(unittest.TestCase):
 
     def test_m1x_deploy_selects_newer_commit_without_switching_development_branch(self):
         root = Path(__file__).resolve().parents[1]
+        helper = (root / "scripts" / "git-release-source.sh").read_text(encoding="utf-8")
+        self.assertIn('merge-base --is-ancestor "$release_head" "$current_head"', helper)
+        self.assertIn('merge-base --is-ancestor "$current_head" "$release_head"', helper)
+        self.assertIn('git -C "$repo_dir" archive "$DEPLOY_SELECTED_HEAD"', helper)
+        self.assertIn('current branch $current_branch and $release_branch have diverged', helper)
+        self.assertNotIn("git switch", helper)
+        self.assertNotIn("git checkout", helper)
         for name in ("deploy-m1x-api-systemd.sh", "deploy-m1x-worker-systemd.sh"):
             script = (root / "scripts" / name).read_text(encoding="utf-8")
-            self.assertIn('merge-base --is-ancestor "$release_head" "$current_head"', script)
-            self.assertIn('merge-base --is-ancestor "$current_head" "$release_head"', script)
-            self.assertIn('git -C "$REPO_DIR" archive "$selected_head"', script)
-            self.assertIn('current branch $current_branch and $BRANCH have diverged', script)
+            self.assertIn('source "$SCRIPT_DIR/git-release-source.sh"', script)
+            self.assertIn('prepare_isolated_git_source "$REPO_DIR" "$BRANCH"', script)
             self.assertNotIn("git switch", script)
             self.assertNotIn("git checkout", script)
+
+    def test_all_managed_java_deployments_use_isolated_source_selection(self):
+        root = Path(__file__).resolve().parents[1]
+        scripts = (
+            "deploy-m1x-api-systemd.sh",
+            "deploy-m1x-worker-systemd.sh",
+            "deploy-stop-api-systemd.sh",
+            "deploy-ddmp-family-api.sh",
+        )
+        for name in scripts:
+            script = (root / "scripts" / name).read_text(encoding="utf-8")
+            self.assertIn('source "$SCRIPT_DIR/git-release-source.sh"', script)
+            self.assertIn("prepare_isolated_git_source", script)
+
+    def test_isolated_source_selection_prefers_descendant_and_keeps_branch(self):
+        root = Path(__file__).resolve().parents[1]
+        helper = root / "scripts" / "git-release-source.sh"
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            remote = tmp_path / "remote.git"
+            repo = tmp_path / "repo"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-b", "release", str(repo)], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.name", "Deploy Test"], check=True)
+            subprocess.run(["git", "-C", str(repo), "config", "user.email", "deploy@example.invalid"], check=True)
+            subprocess.run(["git", "-C", str(repo), "remote", "add", "origin", str(remote)], check=True)
+            (repo / "version.txt").write_text("release\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "add", "version.txt"], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-m", "release"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "push", "-u", "origin", "release"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "switch", "-c", "feature"], check=True, capture_output=True)
+            (repo / "version.txt").write_text("feature\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(repo), "commit", "-am", "feature"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "push", "-u", "origin", "feature"], check=True, capture_output=True)
+            expected = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+            shell = f'''set -euo pipefail
+fail() {{ echo "ERROR: $*" >&2; exit 1; }}
+source "{helper}"
+prepare_isolated_git_source "{repo}" release deploysys-source-test
+test "$DEPLOY_SELECTED_HEAD" = "{expected}"
+test "$(cat "$DEPLOY_BUILD_DIR/version.txt")" = feature
+test "$(git -C "{repo}" symbolic-ref --short HEAD)" = feature
+cleanup_isolated_git_source deploysys-source-test
+'''
+            subprocess.run(["bash", "-c", shell], check=True, capture_output=True, text=True)
 
 
 if __name__ == "__main__":

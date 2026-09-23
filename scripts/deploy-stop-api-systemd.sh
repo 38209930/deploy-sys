@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/git-release-source.sh"
+
 ACTION="${1:-}"
 REPO_DIR="${STOP_REPO_DIR:-}"
 DEPLOY_HOST="${STOP_DEPLOY_HOST:-}"
@@ -58,21 +61,17 @@ REMOTE
 
 build_api() {
   require_value STOP_REPO_DIR "$REPO_DIR"
-  require_command git; require_command mvn; require_command sha256sum
+  require_command git; require_command mvn; require_command sha256sum; require_command tar
   git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "STOP repository not found: $REPO_DIR"
   [ -x "$JAVA8_HOME/bin/java" ] || fail "JDK 8 not found: $JAVA8_HOME"
-  [ -z "$(git -C "$REPO_DIR" status --porcelain)" ] || fail "repository is dirty: $REPO_DIR"
-  [ "$(git -C "$REPO_DIR" symbolic-ref --short HEAD)" = "$BRANCH" ] || fail "expected branch $BRANCH"
-  git -C "$REPO_DIR" fetch origin "$BRANCH"
-  local_head="$(git -C "$REPO_DIR" rev-parse HEAD)"
-  [ "$local_head" = "$(git -C "$REPO_DIR" rev-parse "origin/$BRANCH")" ] || fail "local HEAD does not match origin/$BRANCH"
-  [ -z "$EXPECTED_COMMIT" ] || [ "$local_head" = "$EXPECTED_COMMIT" ] || fail "HEAD does not match STOP_EXPECTED_COMMIT"
   "$JAVA8_HOME/bin/java" -version 2>&1 | head -n 1 | grep -q '1\.8' || fail "STOP_JAVA_HOME is not JDK 8"
-  (cd "$REPO_DIR" && JAVA_HOME="$JAVA8_HOME" PATH="$JAVA8_HOME/bin:$PATH" mvn -B -Dstyle.color=never -pl train-web -am clean verify)
-  LOCAL_JAR="$REPO_DIR/train-web/target/train-web-test-1.0.2.jar"
+  prepare_isolated_git_source "$REPO_DIR" "$BRANCH" stop-family-api-build "$EXPECTED_COMMIT"
+  trap 'cleanup_isolated_git_source stop-family-api-build' EXIT
+  (cd "$DEPLOY_BUILD_DIR" && JAVA_HOME="$JAVA8_HOME" PATH="$JAVA8_HOME/bin:$PATH" mvn -B -Dstyle.color=never -pl train-web -am clean verify)
+  LOCAL_JAR="$DEPLOY_BUILD_DIR/train-web/target/train-web-test-1.0.2.jar"
   [ -f "$LOCAL_JAR" ] || fail "API artifact not found: $LOCAL_JAR"
   LOCAL_SHA="$(sha256sum "$LOCAL_JAR" | awk '{print $1}')"
-  RELEASE_ID="$(date +%Y%m%d-%H%M%S)-$(git -C "$REPO_DIR" rev-parse --short HEAD)"
+  RELEASE_ID="$(date +%Y%m%d-%H%M%S)-$(git -C "$REPO_DIR" rev-parse --short "$DEPLOY_SELECTED_HEAD")"
   REMOTE_STAGE="/home/deploy/stop-api.${RELEASE_ID}.jar.upload"
 }
 

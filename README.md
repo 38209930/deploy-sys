@@ -172,6 +172,8 @@ python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 
 `scripts/deploy-m1x-api-systemd.sh` 用于发布 API/Worker 分离后的 M1X API。脚本只操作 `m1x-api.service`，不会启动、停止或重启 Worker；Worker 状态只作为验收信息输出。
 
+所有由 deploySys 自管的 Java 源码发布统一使用 `scripts/git-release-source.sh` 选择构建版本。发布前会拉取当前分支和 `release`：若一方是另一方的祖先，则选择后代提交；提交相同则直接使用；两条分支已经分叉时停止发布。当前分支必须与对应远端分支一致，工作区必须干净。选中的提交会导出到 `/tmp` 隔离目录构建，发布过程不会切换或修改开发工作区分支。该规则适用于 M1X API/Worker、STOP、ETBST、DDMP、VET、DGYE 及 DDMP-family 通用发布脚本。
+
 发布流程包含以下门禁：
 
 - 本地工作树必须干净，当前分支必须与指定远端分支一致；可用 `M1X_EXPECTED_COMMIT` 锁定批准部署的 commit。

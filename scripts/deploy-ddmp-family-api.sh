@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/git-release-source.sh"
+
 ACTION="${1:-}"
 REPO_DIR="${DEPLOY_API_REPO:-}"
 AUTH_JS="${DEPLOY_AUTH_JS:-}"
@@ -126,33 +129,28 @@ REMOTE
 
 build_release() {
   require_value DEPLOY_API_REPO "$REPO_DIR"
-  [ -d "$REPO_DIR/.git" ] || fail "API repository not found: $REPO_DIR"
+  git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "API repository not found: $REPO_DIR"
   [ -x "$JAVA8_HOME/bin/java" ] || fail "JDK 8 not found: $JAVA8_HOME"
   require_command git
   require_command mvn
   require_command sha256sum
-
-  [ -z "$(git -C "$REPO_DIR" status --porcelain)" ] || fail "repository is dirty: $REPO_DIR"
-  current_branch="$(git -C "$REPO_DIR" symbolic-ref --short HEAD)"
-  [ "$current_branch" = "$BRANCH" ] || fail "expected branch $BRANCH, found $current_branch"
-
-  git -C "$REPO_DIR" fetch origin "$BRANCH"
-  local_head="$(git -C "$REPO_DIR" rev-parse HEAD)"
-  remote_head="$(git -C "$REPO_DIR" rev-parse "origin/$BRANCH")"
-  [ "$local_head" = "$remote_head" ] || fail "local HEAD does not match origin/$BRANCH"
+  require_command tar
 
   java_version="$("$JAVA8_HOME/bin/java" -version 2>&1 | head -n 1)"
   printf '%s\n' "$java_version" | grep -q '1\.8' || fail "DEPLOY_JAVA_HOME is not JDK 8"
 
+  prepare_isolated_git_source "$REPO_DIR" "$BRANCH" ddmp-family-api-build
+  trap 'cleanup_isolated_git_source ddmp-family-api-build' EXIT
+
   (
-    cd "$REPO_DIR"
+    cd "$DEPLOY_BUILD_DIR"
     JAVA_HOME="$JAVA8_HOME" PATH="$JAVA8_HOME/bin:$PATH" mvn clean package
   )
 
-  LOCAL_JAR="$REPO_DIR/train-web/target/$REMOTE_JAR"
+  LOCAL_JAR="$DEPLOY_BUILD_DIR/train-web/target/$REMOTE_JAR"
   [ -f "$LOCAL_JAR" ] || fail "build artifact not found: $LOCAL_JAR"
   LOCAL_SHA="$(sha256sum "$LOCAL_JAR" | awk '{print $1}')"
-  RELEASE_ID="$(date +%Y%m%d-%H%M%S)-$(git -C "$REPO_DIR" rev-parse --short HEAD)"
+  RELEASE_ID="$(date +%Y%m%d-%H%M%S)-$(git -C "$REPO_DIR" rev-parse --short "$DEPLOY_SELECTED_HEAD")"
   REMOTE_STAGE="${REMOTE_DIR}/${REMOTE_JAR}.${RELEASE_ID}.new"
 }
 
