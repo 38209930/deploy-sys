@@ -87,27 +87,58 @@ build_worker() {
   [ -x "$JAVA8_HOME/bin/java" ] || fail "JDK 8 not found: $JAVA8_HOME"
   require_command mvn
   require_command sha256sum
+  require_command tar
 
   [ -z "$(git -C "$REPO_DIR" status --porcelain)" ] || fail "repository is dirty: $REPO_DIR"
   current_branch="$(git -C "$REPO_DIR" symbolic-ref --short HEAD)"
-  [ "$current_branch" = "$BRANCH" ] || fail "expected branch $BRANCH, found $current_branch"
-  git -C "$REPO_DIR" fetch origin "$BRANCH"
-  local_head="$(git -C "$REPO_DIR" rev-parse HEAD)"
-  remote_head="$(git -C "$REPO_DIR" rev-parse "origin/$BRANCH")"
-  [ "$local_head" = "$remote_head" ] || fail "local HEAD does not match origin/$BRANCH"
-  if [ -n "$EXPECTED_COMMIT" ]; then
-    [ "$local_head" = "$EXPECTED_COMMIT" ] || fail "HEAD does not match M1X_EXPECTED_COMMIT"
+  git -C "$REPO_DIR" fetch origin "$current_branch" "$BRANCH"
+  current_head="$(git -C "$REPO_DIR" rev-parse HEAD)"
+  remote_current_head="$(git -C "$REPO_DIR" rev-parse "origin/$current_branch")"
+  release_head="$(git -C "$REPO_DIR" rev-parse "origin/$BRANCH")"
+  [ "$current_head" = "$remote_current_head" ] \
+    || fail "current branch HEAD does not match origin/$current_branch"
+
+  if [ "$current_head" = "$release_head" ]; then
+    selected_head="$current_head"
+    selected_source="$current_branch (same commit as $BRANCH)"
+  elif git -C "$REPO_DIR" merge-base --is-ancestor "$release_head" "$current_head"; then
+    selected_head="$current_head"
+    selected_source="$current_branch"
+  elif git -C "$REPO_DIR" merge-base --is-ancestor "$current_head" "$release_head"; then
+    selected_head="$release_head"
+    selected_source="$BRANCH"
+  else
+    fail "current branch $current_branch and $BRANCH have diverged; merge before deployment"
   fi
+  if [ -n "$EXPECTED_COMMIT" ]; then
+    [ "$selected_head" = "$EXPECTED_COMMIT" ] || fail "selected commit does not match M1X_EXPECTED_COMMIT"
+  fi
+
+  echo "current_branch=$current_branch"
+  echo "release_branch=$BRANCH"
+  echo "selected_source=$selected_source"
+  echo "selected_commit=$selected_head"
+
   "$JAVA8_HOME/bin/java" -version 2>&1 | head -n 1 | grep -q '1\.8' || fail "M1X_JAVA_HOME is not JDK 8"
 
+  BUILD_DIR="$(mktemp -d /tmp/m1x-worker-build.XXXXXX)"
+  cleanup_build_dir() {
+    case "$BUILD_DIR" in
+      /tmp/m1x-worker-build.*) rm -rf -- "$BUILD_DIR" ;;
+      *) echo "WARNING: refusing to remove unexpected build directory: $BUILD_DIR" >&2 ;;
+    esac
+  }
+  trap cleanup_build_dir EXIT
+  git -C "$REPO_DIR" archive "$selected_head" | tar -x -C "$BUILD_DIR"
+
   (
-    cd "$REPO_DIR"
+    cd "$BUILD_DIR"
     JAVA_HOME="$JAVA8_HOME" PATH="$JAVA8_HOME/bin:$PATH" mvn -B -Dstyle.color=never -pl train-worker -am clean verify
   )
-  LOCAL_JAR="$REPO_DIR/train-worker/target/train-worker-1.0.2.jar"
+  LOCAL_JAR="$BUILD_DIR/train-worker/target/train-worker-1.0.2.jar"
   [ -f "$LOCAL_JAR" ] || fail "Worker artifact not found: $LOCAL_JAR"
   LOCAL_SHA="$(sha256sum "$LOCAL_JAR" | awk '{print $1}')"
-  RELEASE_ID="$(date +%Y%m%d-%H%M%S)-$(git -C "$REPO_DIR" rev-parse --short HEAD)"
+  RELEASE_ID="$(date +%Y%m%d-%H%M%S)-$(git -C "$REPO_DIR" rev-parse --short "$selected_head")"
   REMOTE_STAGE="/home/deploy/m1x-worker.${RELEASE_ID}.jar.upload"
 }
 

@@ -417,6 +417,17 @@ class CompatibilityTests(unittest.TestCase):
         self.assertIn('sudo systemctl stop "$worker_service"', worker_script)
         self.assertIn("rollback()", worker_script)
 
+    def test_m1x_deploy_selects_newer_commit_without_switching_development_branch(self):
+        root = Path(__file__).resolve().parents[1]
+        for name in ("deploy-m1x-api-systemd.sh", "deploy-m1x-worker-systemd.sh"):
+            script = (root / "scripts" / name).read_text(encoding="utf-8")
+            self.assertIn('merge-base --is-ancestor "$release_head" "$current_head"', script)
+            self.assertIn('merge-base --is-ancestor "$current_head" "$release_head"', script)
+            self.assertIn('git -C "$REPO_DIR" archive "$selected_head"', script)
+            self.assertIn('current branch $current_branch and $BRANCH have diverged', script)
+            self.assertNotIn("git switch", script)
+            self.assertNotIn("git checkout", script)
+
 
 if __name__ == "__main__":
     unittest.main()
