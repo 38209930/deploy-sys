@@ -7,7 +7,7 @@
 - VPC `vpc-2zervez1jgscsglpenrzo`，北京，IPv4 `172.16.0.0/12`，未发现启用 IPv6。ACS `ruishi-prod-acs`：`cebc88343a44b4d759aa983a47b787835`。
 - 系统路由表 `vtb-2zebvv47akvfr0cq15njq` **关联下面全部七个旧 vSwitch**；仅有七条 VPC local、`100.64.0.0/10` 服务路由和 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen`，没有默认路由。未发现本 VPC 的公网 NAT。
 - `kube-system/acs-profile` 的 `vSwitchIds` 仅为旧 k/i 两个 vSwitch，`selectors` 为空。当前八个运行 Pod 分属七个 Java 项目，全部显式指定旧 k vSwitch `vsw-2zeagdbk8hizkkdw0ns42`；八个 Deployment 各为 1 副本，均可用。M1X 的 API 与 Worker 分别计入。另有两个已结束的 DGYE 诊断 Pod，无选址注解，不作为生产来源。
-- 旧 k 网段还含范围外网站 ECS `172.31.238.203`；旧 f 网段含 SmsCore ECS `172.27.182.18`。两者均不得进入新 SNAT。SmsCore 的供应商侧实际出口与白名单仍需单独核实。
+- 旧 k 网段还有独立网站 ECS `172.31.238.203`，自带公网 IP；按阿里云出口优先级，它继续使用自身公网地址，不是新建 Pod 网段的必要条件，也不纳入项目迁移。旧 f 网段含 SmsCore ECS `172.27.182.18`，其短信供应商出口保持独立；供应商侧实际出口与白名单仍需单独核实。
 
 | 旧 vSwitch | 可用区 / CIDR | 已知来源 | 目标路由表 |
 |---|---|---|---|
@@ -36,7 +36,7 @@ NAT 专用 k     ── VPC 系统表（创建 NAT 后自动出现的 0.0.0.0/0�
 新 Pod k/i     ── 各自 vSwitch 级 SNAT → 同一个固定 EIP
 ```
 
-不能先在旧 k 网段给现有 Pod 加 `/32` SNAT：旧 vSwitch 的保留原路径路由表没有指向 NAT 的默认路由，SNAT 条目单独存在也不能出网。灰度应先将**目标 Pod 移入新专用 vSwitch**，再使用新 vSwitch 的 NAT 路由和 SNAT 验证。旧 k/i、网站 ECS、SmsCore 继续使用原路由；不得对旧 `/20` 或整个 VPC 建通配 SNAT。
+按本版隔离方案，不能先在旧 k 网段给现有 Pod 加 `/32` SNAT：旧 vSwitch 的保留原路径路由表没有指向 NAT 的默认路由，SNAT 条目单独存在也不能出网。灰度应先将**目标 Pod 移入新专用 vSwitch**，再使用新 vSwitch 的 NAT 路由和 SNAT 验证。旧 k/i、网站 ECS、SmsCore 继续使用原路由；本版不对旧 `/20` 或整个 VPC 建通配 SNAT。网站 ECS 本身不阻止复用旧 k；若改用旧 k，须另订覆盖范围和路由变更单，不直接套用本版步骤。
 
 创建 NAT 会自动修改系统表，故必须先使七个旧 vSwitch 全部脱离系统表。自定义路由表会自动包含本地和服务路由，但**不会自动继承对等连接自定义路由**；必须手工复制 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen` 并只读对比。关联 API 是异步的，每个 vSwitch 完成后查询状态及真实私网/入站业务，再处理下一个。创建 NAT 后不得把旧 vSwitch 直接解绑回系统表，否则会落入带 NAT 默认路由的系统表。
 

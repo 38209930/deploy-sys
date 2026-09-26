@@ -22,7 +22,7 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 | SmsCore | ECS `i-2ze38hdx1sufodad2kz0`，私网 `172.27.182.18`，实例自带公网地址 `39.107.141.33`；**该地址不是本次新 EIP**。供应商观察到的实际源地址、白名单仍待核对 |
 | ACS 运行配置 | `acs-profile` 目前只有旧 k/i 两个 vSwitch，`selectors` 为空；八个运行中的 Java Pod/Deployment 全部显式指定旧 k vSwitch，均为 1 副本且可用 |
 
-**生产创建阻断：**[阿里云 CreateNatGateway 文档](https://help.aliyun.com/zh/nat-gateway/developer-reference/api-vpc-2016-04-28-createnatgateway-natgws)说明，首次创建增强型公网 NAT 会自动给 VPC 系统路由表加入指向 NAT 的 `0.0.0.0/0`。官方进一步说明，系统路由会引导关联的全部 vSwitch 流量；没有匹配 SNAT 的来源可能无法访问公网。[路由与 SNAT 粒度说明](https://help.aliyun.com/zh/nat-gateway/user-guide/use-internet-nat-gateway-for-public-network-access)。因此“先给诊断 Pod 配 `/32` SNAT”**不能隔离创建 NAT 时的自动路由影响**。当前七个 vSwitch 均使用系统表，直接创建会改变本次范围外来源的路由；本手册禁止按原顺序继续阶段 B。网站 ECS 虽有自带公网 IP，官方记载实例自带公网 IP 优先于 SNAT，但这不足以证明其他私网实例和服务不受影响。当前两个 `/20` 整段 SNAT 也会覆盖范围外来源。不能把 Namespace 视为 NAT 隔离边界。
+**生产创建阻断：**[阿里云 CreateNatGateway 文档](https://help.aliyun.com/zh/nat-gateway/developer-reference/api-vpc-2016-04-28-createnatgateway-natgws)说明，首次创建增强型公网 NAT 会自动给 VPC 系统路由表加入指向 NAT 的 `0.0.0.0/0`。官方进一步说明，系统路由会引导关联的全部 vSwitch 流量；没有匹配 SNAT 的来源可能无法访问公网。[路由与 SNAT 粒度说明](https://help.aliyun.com/zh/nat-gateway/user-guide/use-internet-nat-gateway-for-public-network-access)。因此“先给诊断 Pod 配 `/32` SNAT”**不能隔离创建 NAT 时的自动路由影响**。当前七个 vSwitch 均使用系统表，直接创建会改变本次范围外来源的路由；本手册禁止按原顺序继续阶段 B。网站 ECS 有自己的公网 IP，按官方优先级继续使用自身公网出口；它不是必须新建 Pod 网段的理由。选择新业务网段是为了避免旧网段的 ACS 系统 Pod 等其他私网来源被整段 SNAT 纳入。复用旧网段在技术上可行，但需要单独确认来源范围和路由方案。不能把 Namespace 视为 NAT 隔离边界。
 
 ### 已确定的隔离设计
 
