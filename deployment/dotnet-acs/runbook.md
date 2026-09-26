@@ -1,0 +1,59 @@
+# .NET ACS 标准发布手册
+
+适用范围：北京 `ruishi-prod-acs` 本轮五项目。本文规定顺序与停止条件。实际创建资源时使用经代码会话验证的镜像、端口、环境变量和配置版本；任何变量尚未查实就停在该步。每项目各留一份填写完整的[发布记录](inventory.md)。
+
+## 0. 发布前冻结
+
+1. 刷新每个目标仓库远端引用，复核提交祖先关系；整理本机未提交业务修改，排除生成文件、个人配置和客户数据。新零售与积分商城虽然共用 Codeup 远端，但业务分支不同，必须分别冻结 SHA。代码会话完成评审、Release 构建、必要测试后再确认 `release` 基线。
+2. 锁定每角色镜像 **digest**、构建 run 和源码 SHA；容器内不得包含生产配置。确认 Linux x64、固定 SDK/ASP.NET Runtime 版本、非 root 运行、可写临时目录和日志路径。Worker 无 HTTP Service。
+3. 完成 `项目 / 角色 / 业务 / 目的域名和端口 / SDK或HttpClient / 代理支持 / 超时 / 重试 / 幂等键 / 回调 / 来源白名单 / 验证结果` 外呼表。代理不兼容或非 HTTP 依赖在开发阶段解决；缺一项不采购或切换。
+4. 冻结数据库结构与配置版本。证明旧新 API 并行期兼容、连接池总数可承受、无启动自动迁移和不受控 HostedService。经销商还须完成独立库数据转换演练和前端契约验收。
+5. 记录旧服务实例、启动/停机/自动拉起机制和回滚命令；确定旧 Worker 已执行事件查询方式。各项目业务负责人确定验收场景及维护窗口。
+
+## 1. 出口代理准备
+
+1. 根据账号实时报价确认非突发性能 `ecs.u1-c1m1.large`（2 CPU/2 GiB）、40 GiB 云盘、独立按流量 EIP、10 Mbps 带宽上限及流量预算。2026-09-26 的一次 `DescribePrice` 查询约为 **¥0.36291/小时**，未确认其折扣与 EIP/流量组成，不能据此作采购承诺。
+2. 将 ECS 建在同 VPC 的单独安全组；公网只暴露 EIP 出口，不开放代理 `3128` 入站。私网仅允许已确认的 ACS Pod 来源到代理 3128；代理本身不承载 SmsCore、数据库或回调入口。
+3. 安装系统支持的 Squid 版本，锁定版本、配置哈希与 systemd 服务。目的域名默认拒绝，只放行外呼表批准的 HTTPS CONNECT 443；阻止访问私网、回环、链路本地和云元数据。按项目分配鉴权，不记录完整 URL 查询串或认证头。
+4. 从各项目测试 Pod 分别验证允许目的域名、拒绝未授权域名、拒绝内网目标、未授权来源/错误凭据和 DNS 解析；检查第三方实测看到的 EIP。旧新出口 IP 在切换期间同时列入供应商白名单。
+5. 一个出口 ECS 是单点；代理故障时暂停依赖公网的任务和调用，按版本化配置重建并复用 EIP，禁止绕过代理回退到随机公网出口。
+
+## 2. 项目零副本资源
+
+按 [资源清单](inventory.md) 指定顺序逐项目操作。创建前保存现有 Java 命名空间、ACR 凭据助手及 ALB Host 规则的只读基线。
+
+1. 创建项目 Namespace、ServiceAccount 与 ResourceQuota。只在 ACR 凭据助手的 `watchNamespace` 和 `serviceAccount` 追加该项目同名条目，保留旧列表；拉取权限验收后复查既有项目。
+2. 建立每角色单独的 ACR 仓库和 `release` 固定 SHA 构建规则。构建失败时先排查公网依赖和 Dockerfile，不修改生产服务。镜像引用使用 digest。需核对仓库存储量、构建并发与产生费用。
+3. 在获得具体授权后，通过受控通道下发**项目专用**生产 Secret；只记录名称、键、版本/摘要，不打印值。确认私网数据库/Redis/Mongo、SmsCore `172.27.182.18:3090`、代理及 `NO_PROXY` 值的语义；不要假定 SDK 都支持 CIDR 格式。变更 Secret 后显式滚动目标 Deployment。
+4. 生成 Front/Admin/Worker Deployment，均以 `replicas: 0` 创建；`strategy.type: Recreate`、`requests=limits`、无 HPA。API 监听 `8080`（经代码会话最终验证），ClusterIP Service 指向对应 API。Worker 不创建 Service/Ingress。
+5. API 探针：`/health/live` 只判进程；`/health/ready` 检查必要数据库、Redis 和所需结构。startup 5 秒×60、liveness 10 秒×3、readiness 5 秒×3，超时均 2 秒；如果实测启动时间不同，先更新清单与维护窗口。Worker 使用启动预检、心跳和任务结果，不配置伪 HTTP 探针。
+6. `ASPNETCORE_ENVIRONMENT` 和 `DOTNET_ENVIRONMENT` 均为 `Production`；HTTP 绑定 `0.0.0.0:8080`；不以仓库默认配置覆盖 Secret。可信代理范围按 ALB **当前** Local IP 精确配置，`ForwardLimit=1`，实际经 ALB 请求核对 scheme、来源 IP、Cookie Secure、重定向和 CORS。
+7. 在新 ALB 上由 Ingress Controller 创建精确 Host 规则。Ingress 使用 `ingressClassName: alb`，443 对应已核实证书，不改既有 Host 和监听器 ACL。此时 DNS 仍指旧 ALB。以指定 Host/SNI 请求新 ALB 做无流量切换的验收，证书校验必须通过；不要用 `curl -k` 掩盖证书问题。
+
+## 3. 单项目启动与切换
+
+正式域名目前仍解析旧 ALB；先获取对象明确的首次生产启动/停旧服务/切流授权，再按下述步骤执行：
+
+1. 将 Front/Admin API 扩至 1，观察镜像拉取、进程、startup/readiness、数据库与缓存连接、内存峰值。通过新 ALB 的 Host/SNI 验证登录、读写主链、回调模拟或受控真实请求；401/403/404 只证明网关可达。
+2. 核对旧新 API 并行访问数据无冲突，且没有业务定时器或消息消费者在 API 内启动。若 API 无法先与旧版并行，停止并按该项目已评审的独立维护方案执行，禁止现场发明双写策略。
+3. 对有 Worker 的项目：停止旧 Worker 并禁用自动拉起；确认进程退出、在途任务结束或状态明确、锁与待办队列可解释；再扩 ACS Worker 到 1。验证调度加载、首次到期任务、心跳、业务结果和重复执行防护。资金任务不自动批量补跑。
+4. 确认证书、新 ALB 精确 Host 转发、客户端实测、回调白名单和生产业务验收。再将该项目域名由旧 ALB 记录切到新 ALB DNS `alb-olyb9enxszy3f42nnn.cn-beijing.alb.aliyuncsslb.com`；检查权威 DNS、递归 DNS 和实际 HTTPS 请求。旧 API 保留至 TTL 与在途请求结束，旧 Worker 继续停止。
+5. 记录切换时间、镜像 digest、Secret 版本、结构版本、Ingress/ALB 规则、DNS 前后值、业务证据和回滚入口。观察至少 24 小时并覆盖一次关键任务周期，随后才开始下一项目。经销商没有 Worker，但必须冻结旧后台写入、做最终数据导入与校验后切流。
+
+## 4. 回滚门槛与动作
+
+- 数据串库、鉴权绕过、重复扣款/退款/积分/短信：立即停止受影响新流量或任务，留存事件证据，不等待 10 分钟。
+- 持续 10 分钟明显错误率/P95 恶化、OOM/CrashLoop、长期探针失败或关键业务结果不符：暂停下一项目并执行该项目回滚。
+- API：先确认旧版对当前数据库结构和已发生写入兼容，再把精确 Host/DNS 恢复到旧入口；恢复旧镜像和其**配套 Secret/非秘密配置版本**，复核证书、登录和回调。DNS 回滚有缓存窗口，记录双入口请求。
+- Worker：先把新 Worker 缩至 0 并确认 Pod 实际退出，核对已执行事件、待办队列和在途状态，随后恢复旧 Worker。不得以强制删除 Pod 后立即启动旧 Worker 代替交接。
+- 经销商：若新库已有生产写入，必须先处理增量数据，不能单靠 DNS 回切。回滚方案在首次切流前通过迁移演练确认。
+
+## 5. 关闭发布
+
+对照 [项目验收表](inventory.md) 检查实际外呼出口、SmsCore 私网调用、API/Worker 业务记录、旧新执行重叠、CPU/内存和监控告警；内存峰值原则上不超过 limit 80%。保留发布及回滚证据，完成 `release` 到 `master` 的已验收变更同步。核对旧服务停用范围，不停止 AI Front、以旧换新或 SmsCore。最后对比 Java 应用和共享 ALB 的变更前后状态。
+
+## 官方依据
+
+- [ACS Pod 网络路径](https://help.aliyun.com/zh/cs/user-guide/accessing-the-external-network-in-the-pod)、[ResourceQuota](https://help.aliyun.com/zh/cs/user-guide/using-capacity-scheduling)、[ACS 计费](https://help.aliyun.com/zh/cs/product-overview/product-billing-rules)
+- [ALB Ingress 工作原理](https://help.aliyun.com/zh/slb/application-load-balancer/alb-ingress)、[Kubernetes Deployment 替代 Pod 的行为](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- [ASP.NET Core 健康检查](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/health-checks?view=aspnetcore-10.0)、[可信代理与转发头](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0)、[Squid ACL](https://www.squid-cache.org/Doc/config/http_access/)
