@@ -1,6 +1,6 @@
 # ACS 公共公网出口：执行手册与当前门槛
 
-状态：**阶段 A 只读网络核对完成一部分；未创建 NAT、EIP、路由或 SNAT，生产项目尚未接入。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。
+状态：**阶段 A 网络与 ACS 选址只读核对完成；生产网络变更单待授权，未创建 NAT、EIP、路由或 SNAT，生产项目尚未接入。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。具体资源、拓扑、顺序与回滚以[生产网络变更单](egress-nat-change-order.md)为准。
 
 ## 1. 固定架构与边界
 
@@ -20,15 +20,13 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 | 公网 NAT / EIP | 公网 NAT 数量为 0；现有 EIP 均已绑定其他资源，不可直接复用 |
 | 范围外来源 | 网站 ECS `i-2ze1j9z5b6vggyjr4bxv` 的私网 IP `172.31.238.203` 落在 ACS 北京 k 的 `/20` 内；同一系统路由表还服务其他五个 vSwitch |
 | SmsCore | ECS `i-2ze38hdx1sufodad2kz0`，私网 `172.27.182.18`，实例自带公网地址 `39.107.141.33`；**该地址不是本次新 EIP**。供应商观察到的实际源地址、白名单仍待核对 |
+| ACS 运行配置 | `acs-profile` 目前只有旧 k/i 两个 vSwitch，`selectors` 为空；八个运行中的 Java Pod/Deployment 全部显式指定旧 k vSwitch，均为 1 副本且可用 |
 
 **生产创建阻断：**[阿里云 CreateNatGateway 文档](https://help.aliyun.com/zh/nat-gateway/developer-reference/api-vpc-2016-04-28-createnatgateway-natgws)说明，首次创建增强型公网 NAT 会自动给 VPC 系统路由表加入指向 NAT 的 `0.0.0.0/0`。官方进一步说明，系统路由会引导关联的全部 vSwitch 流量；没有匹配 SNAT 的来源可能无法访问公网。[路由与 SNAT 粒度说明](https://help.aliyun.com/zh/nat-gateway/user-guide/use-internet-nat-gateway-for-public-network-access)。因此“先给诊断 Pod 配 `/32` SNAT”**不能隔离创建 NAT 时的自动路由影响**。当前七个 vSwitch 均使用系统表，直接创建会改变本次范围外来源的路由；本手册禁止按原顺序继续阶段 B。网站 ECS 虽有自带公网 IP，官方记载实例自带公网 IP 优先于 SNAT，但这不足以证明其他私网实例和服务不受影响。当前两个 `/20` 整段 SNAT 也会覆盖范围外来源。不能把 Namespace 视为 NAT 隔离边界。
 
-### 解除阻断所需的网络修订
+### 已确定的隔离设计
 
-1. 逐 vSwitch 枚举 ECS、ACS Pod/ENI、ALB ENI及其他资源，按来源和现有出站方式分类；特别核验范围外 ECS 与 SmsCore 的实际出口。保存全部路由表关联、路由条目及关键业务基线。
-2. 先设计并评审**路由表隔离**：可采用事先创建自定义路由表并迁移不应受 NAT 默认路由影响的 vSwitch；关联变更本身影响共享网络，须列出逐交换机窗口、验证与回退。禁止仅凭“没有 SNAT 就不会受影响”下结论。预演新路由表是否保留本地及对等连接路由；检查阿里云对系统路由传播的实际行为。
-3. 再解决**来源隔离**：优先给纳入项目使用专用 ACS Pod vSwitch，并明确 Pod 选址、重建和与现网 Java 的迁移窗口；或提出可随 Pod 重建稳定生效、且不覆盖网站 ECS 的等效方案。ACS 官方要求 Pod 指定的 vSwitch 已在集群配置中；把新 vSwitch 加入集群后，未指定的 Pod 可能随机选中它，故必须同时设计已有工作负载的显式选址或其他全量隔离办法，不能只给新项目写 Annotation。[ACS 指定 vSwitch](https://help.aliyun.com/zh/cs/user-guide/specify-vswitch-and-securitygroups-for-the-pod)、[ACS 扩展 vSwitch](https://help.aliyun.com/zh/cs/user-guide/use-additional-vpc-segments-to-expand-the-virtual-switches-of)。临时 Pod `/32` 只用于诊断和单 Pod 灰度，不得当成最终规则。所有改造须保持 SmsCore 与现有 Java 私网路径、ALB 入站可用。
-4. 修订后的路由/来源拓扑、资源 ID、CIDR、变更窗口、回滚命令与范围外验证证据形成独立变更单；获得该**扩大后的生产网络变更范围**授权后，才可采购并创建 NAT/EIP。未通过评审，不为赶进度在共享系统表上试建。
+七个旧 vSwitch 先转到没有默认路由的自定义表，完整保留 VPC local、云服务和对等连接路由；NAT 专用 vSwitch 单独保留在系统表，承接创建 NAT 时自动加入的默认路由。另建两个 ACS 业务 Pod 专用 vSwitch 与出口自定义路由表，只有该表指向 NAT。`acs-profile` 先设置旧 k/i 兜底选址 selector，再追加新 vSwitch；业务 Pod 逐个显式迁入，两个新 vSwitch 各建一条稳定 SNAT，指向同一个 EIP。现有旧 k/i 网段、网站 ECS、SmsCore 不加入新出口。具体 CIDR、七个旧交换机、API 顺序及安全回滚见[生产网络变更单](egress-nat-change-order.md)。
 
 ## 3. 阶段 A：每项目发布门槛
 
@@ -46,17 +44,15 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 任何生产外呼清单缺失、旧短信通道仍启用、资金写请求超时重试行为不明、告警接收渠道未落实，均阻断该项目的生产来源 SNAT。不能用 `curl` 出网成功替代真实 SDK、签名、回调和业务结果验收。
 
-## 4. 修订获批后的 API 实施顺序
+## 4. 获批后的 API 实施顺序
 
-下面是执行门槛和顺序，**不是当前可直接运行的命令**。每个写 API 保存 RequestId、参数摘要、资源 ID、前后状态；使用接口支持的固定 ClientToken，结果不明先只读查询。
+每个写 API 保存 RequestId、参数摘要、资源 ID、前后状态；接口支持时使用固定 ClientToken，结果不明先只读查询。完整逐步门槛见[生产网络变更单](egress-nat-change-order.md)。
 
-1. 实时报价、余额与配额核验；确认 NAT 可用区、专用 NAT vSwitch 的不重叠 CIDR、一个普通 BGP 按流量 EIP 的 10 Mbps 带宽上限及具体授权。跨可用区容灾模式保持官方默认或在 API 明确指定；不误选单可用区。专用 NAT vSwitch 不加入 ACS Pod 自动选址。
-2. 按获批的隔离设计完成自定义路由表关联及前后验证；保存现有七 vSwitch 的路由快照。创建 NAT 前检查是否出现新的默认路由或未登记出口。
-3. 创建按量增强型公网 NAT（`NetworkType=internet`、`NatType=Enhanced`）、等待 `Available`；立即核验系统表自动 `0.0.0.0/0` 的关联范围及范围外服务。创建 EIP、绑定 NAT，记录唯一固定公网 IP；只做 SNAT，不建 DNAT。
-4. 诊断 Pod 使用精确源 `/32` 建临时 SNAT。核对 Pod 经 EIP 的公网出站、私网 MySQL/Redis/Mongo/SmsCore、ALB 入站及拒绝入站；DNS/TLS/非 443 端口按外呼表测试。若诊断失败，先查路由、安全组、网络策略，不扩展来源规则。
-5. Java 按 DGYE → VET → STOPMP → ETBST → DDMP → Yangu → M1X 逐项接入。每项 `/32` 源仅用于首轮灰度，Pod 重建后 IP 会变化；最终必须迁到经评审的专用 Pod vSwitch SNAT 或其他稳定精确来源。每次验证真实客户端外呼、供应商侧源 IP、短信只经 SmsCore、任务副作用、私网路径与 ALB。M1X 双角色单独记录。全体观察至少 24 小时并覆盖关键任务周期。
-6. 仅在该 vSwitch **全部当前与未来来源**均属获批范围后，改为稳定的 vSwitch SNAT；验证 Pod 重建后仍从同一 EIP 出网，移除临时 `/32` 规则。禁止对原混用 `172.31.224.0/20` 直接整段创建 SNAT，禁止 VPC 通配 SNAT。
-7. .NET 迁移顺序为 AI → 售后工单 → 积分商城 → 新零售 → 经销商；每项目单独完成代码会话交付、配置授权、Worker/消费者交接、业务验收与 24 小时观察。详细 API/Worker 切换见[发布手册](runbook.md)。
+1. 实时报价与容量核验；建保留原路由的自定义表，复制 `10.0.0.0/24` 对等连接路由；逐个迁走七个旧 vSwitch，核实系统表不再服务旧资源。
+2. 建两个业务 Pod 专用 vSwitch、一个 NAT 专用 vSwitch及出口自定义表；创建增强型公网 NAT，显式使用 `EipBindMode=NAT`，申请并绑定单一 EIP；仅出口表和 NAT 所在系统表有默认路由。
+3. 先设置 ACS 旧 k/i 默认选址护栏，再追加两个业务 Pod vSwitch。新 k/i 诊断 Pod 各使用 `/32` 临时 SNAT验证固定 EIP和私网；随后仅对两个**新** vSwitch 建稳定 SNAT并清理诊断条目。
+4. 按 DGYE → VET → STOPMP → ETBST → DDMP → Yangu → M1X 逐项把已通过业务门槛的 Deployment 显式迁入新 vSwitch。每次验收真实 SDK外呼、私网、ALB、SmsCore 和任务状态；M1X 双角色分别核对。全部观察至少 24 小时并覆盖关键任务周期。
+5. .NET 按 AI → 售后工单 → 积分商城 → 新零售 → 经销商顺序迁移，各项目代码交付、配置、Worker/消费者交接及业务验收另按[发布手册](runbook.md)执行。
 
 ## 5. 跨语言外呼及业务验收
 
@@ -74,7 +70,7 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 按北京官方标价估算，跨可用区 NAT `0.23 元/小时`、EIP 保有约 `0.02 元/小时`，720 小时固定费约 **180 元**；再加 `0.23 元 × NAT 双向处理 GiB` 与约 `0.80 元 × 公网出流量 GiB`。流量口径和账单优惠以下单页及当月账单为准。首月 400 元预警、600 元升级复核；阈值不自动断网。[NAT 计费](https://help.aliyun.com/zh/nat-gateway/nat-gateway-billing)、[EIP 计费](https://help.aliyun.com/zh/eip/pay-as-you-go/)、[CDT](https://help.aliyun.com/zh/cdt/internet-data-transfers/)。
 
-临时 `/32` 灰度异常，只撤销对应临时 SNAT 并检查已发生外部结果。最终共享 SNAT 后，单项目优先回滚版本/配置，不撤销所有项目出口。共享网络故障须按事先批准的路由及 SNAT 回滚顺序处理，并逐项复核范围外来源、全部 Java、SmsCore；保留 EIP，不新申请出口。Worker 回滚先停新后启旧，未知支付/退款/短信结果先查证。跨可用区切换可能中断现有连接，不能承诺零中断。
+诊断 `/32` 异常时撤销相应临时 SNAT，不影响旧网段。业务项目异常时优先恢复该 Deployment 的旧选址并检查已发生外部结果；不得直接撤销其他项目依赖的共享 SNAT。NAT 创建后，旧 vSwitch **不得直接解绑回系统表**，因为系统表已有默认路由；共享网络回滚需按[变更单](egress-nat-change-order.md)的阶段顺序操作，并逐项复核范围外来源、全部 Java、SmsCore。保留 EIP，不新申请出口。Worker 回滚先停新后启旧，未知支付/退款/短信结果先查证。跨可用区切换可能中断现有连接，不能承诺零中断。
 
 ## 7. 执行记录模板（不填秘密值）
 
