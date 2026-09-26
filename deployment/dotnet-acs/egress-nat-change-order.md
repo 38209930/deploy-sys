@@ -1,11 +1,12 @@
 # 北京 ACS 公共公网出口：生产网络变更单
 
-状态：**待生产网络变更与付费资源授权；以下资源均未创建。** 核对日期：2026-09-26。执行范围只包含 VPC 路由、专用 vSwitch、ACS Pod 选址、NAT、EIP、SNAT 与网络验收；项目业务配置和真实资金/短信测试另按项目门槛执行。
+状态：**仅完成两张未关联业务 vSwitch 的自定义路由表及 MongoDB 对等连接路由；NAT、EIP、新 vSwitch、SNAT 均未创建。** 核对日期：2026-09-26。生产变更继续受[数据库与 OpenVPN 网段门槛](network-constraints-2026-09-26.md)约束；项目业务配置和真实资金/短信测试另按项目门槛执行。
 
 ## 1. 已核实的现网事实
 
 - VPC `vpc-2zervez1jgscsglpenrzo`，北京，IPv4 `172.16.0.0/12`，未发现启用 IPv6。ACS `ruishi-prod-acs`：`cebc88343a44b4d759aa983a47b787835`。
 - 系统路由表 `vtb-2zebvv47akvfr0cq15njq` **关联下面全部七个旧 vSwitch**；仅有七条 VPC local、`100.64.0.0/10` 服务路由和 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen`，没有默认路由。未发现本 VPC 的公网 NAT。
+- 本次已创建 `acs-legacy-private-route`（`vtb-2ze9057j04btdfr3bofhy`）和 `acs-egress-route`（`vtb-2zedknif7nxu7z397b4o6`），各有相同的 local、服务与 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen` 路由，均无默认路由、关联 vSwitch 数为 0；旧七个 vSwitch 仍在系统表。
 - `kube-system/acs-profile` 的 `vSwitchIds` 仅为旧 k/i 两个 vSwitch，`selectors` 为空。当前八个运行 Pod 分属七个 Java 项目，全部显式指定旧 k vSwitch `vsw-2zeagdbk8hizkkdw0ns42`；八个 Deployment 各为 1 副本，均可用。M1X 的 API 与 Worker 分别计入。另有两个已结束的 DGYE 诊断 Pod，无选址注解，不作为生产来源。
 - 旧 k 网段还有独立网站 ECS `172.31.238.203`，自带公网 IP；按阿里云出口优先级，它继续使用自身公网地址，不是新建 Pod 网段的必要条件，也不纳入项目迁移。旧 f 网段含 SmsCore ECS `172.27.182.18`，其短信供应商出口保持独立；供应商侧实际出口与白名单仍需单独核实。
 
@@ -25,7 +26,7 @@
 | `acs-egress-pods-i` | i / `172.28.64.0/24` | 经批准迁入的 ACS 业务 Pod | 专用出口自定义表 |
 | `acs-nat-k` | k / `172.31.241.0/28` | NAT 独占；不加入 ACS `vSwitchIds` | 系统表 |
 
-三个候选 CIDR 已用本 VPC 的七个现有 vSwitch 网段做不相交校验；创建前仍需由 VPC/IPAM API 重查占用、可用区容量和配额。新资源 ID 在创建时记录，不预填虚构 ID。新 Pod 网段的使用主体严格限于审批清单中的工作负载；Namespace 本身不构成网络隔离。
+三个 CIDR **只是候选**：仅完成了与本 VPC 七个现有 vSwitch 的不相交校验；尚未核实 MongoDB 对等 VPC、OpenVPN 服务端及各数据库白名单的完整网段约束。创建前须完成[网段门槛](network-constraints-2026-09-26.md)，重查 IPAM/占用、可用区容量和配额。新资源 ID 在创建时记录，不预填虚构 ID。新 Pod 网段的使用主体严格限于审批清单中的工作负载；Namespace 本身不构成网络隔离。
 
 ## 2. 固定拓扑与不变量
 
@@ -50,13 +51,13 @@ NAT 专用 k     ── VPC 系统表（创建 NAT 后自动出现的 0.0.0.0/0�
 
 ### B. 隔离旧路由（任何 NAT 创建之前）
 
-1. `CreateRouteTable` 创建 `acs-legacy-private-route`；等待 `Available`。`CreateRouteEntry` 增加对等连接路由，核对完整 local、服务及 peer 路由与系统表相同，且无 `0.0.0.0/0`。
+1. `acs-legacy-private-route` 已创建并为 `Available`；对等连接路由已复制，local、服务及 peer 路由与系统表相同，且无 `0.0.0.0/0`。**继续执行前须重读三张表，并完成数据库与 OpenVPN 网段门槛。**
 2. 对七个旧 vSwitch 按**j → g → l → h → i → k → f**逐个 `AssociateRouteTable`；每次等待 `DescribeVSwitchAttributes` 为 `Available`，检查关联、私网和涉及业务。k 检查全部 Java 入口、网站；f 检查 SmsCore 私网及其原公网；i/h 检查 ALB。任一步异常时停止，NAT 尚未创建，可将已迁移交换机从自定义表解绑回**仍无默认路由**的系统表，逐个核验。
 3. 七个旧 vSwitch 都不再关联系统表，且系统表仍无默认路由，才允许进入下一段。
 
 ### C. 创建隔离出口资源
 
-1. `CreateVSwitch` 创建上述两个 Pod vSwitch 与一个 NAT 专用 vSwitch。创建新自定义 `acs-egress-route`，复制 peer 路由，将两个新 Pod vSwitch 关联到此表；此时没有 NAT 默认路由，也没有 Pod。NAT 专用 vSwitch 留在系统表。逐项确认三个 CIDR、路由关联和系统表仅关联 NAT vSwitch。
+1. `acs-egress-route` 已创建，peer 路由已复制，当前无关联和默认路由。候选网段及白名单、VPN/对等 VPC 回程确认后，`CreateVSwitch` 创建两个 Pod vSwitch 与一个 NAT 专用 vSwitch；将两个新 Pod vSwitch 关联到出口表，NAT 专用 vSwitch 留在系统表。逐项确认三个 CIDR、路由关联和系统表仅关联 NAT vSwitch。
 2. `CreateNatGateway` 指定 VPC、NAT 专用 vSwitch、`NetworkType=internet`、`NatType=Enhanced`、**`EipBindMode=NAT`**，核对跨可用区模式及按量计费参数，使用固定任务 `ClientToken`。等待 NAT `Available`，核验自动新增的系统表 `0.0.0.0/0` 仅作用于 NAT 专用 vSwitch；此时仍无生产 SNAT。
 3. 申请一个普通 BGP 按流量 EIP，带宽上限 10 Mbps；绑定新 NAT，核对唯一公网 IP、资源状态、无 DNAT。`acs-egress-route` 再添加 `0.0.0.0/0 → 新 NAT`，核查旧 `acs-legacy-private-route` 始终没有默认路由。
 

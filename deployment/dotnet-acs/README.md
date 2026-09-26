@@ -1,6 +1,6 @@
 # .NET 10 项目接入现有北京 ACS
 
-状态：**部署准备中，未发布**。更新：2026-09-26。本文是本轮部署的入口；业务代码适配在各项目独立会话完成。任何“待验证”项都不能在切换时凭经验补齐。
+状态：**分项目部署中；新零售与经销商查询已在 ACS 运行，其余项目按各自发布记录核对。公网 NAT 尚未上线。** 更新：2026-09-26。本文是本轮部署的入口；业务代码适配在各项目独立会话完成。任何“待验证”项都不能在切换时凭经验补齐。
 
 ## 范围
 
@@ -12,7 +12,7 @@
 
 | 资源 | 当前事实 |
 |---|---|
-| ACS | 北京 `ruishi-prod-acs`，集群 ID `cebc88343a44b4d759aa983a47b787835`；目前只有既有 Java 项目 Namespace，没有本轮 .NET Namespace |
+| ACS | 北京 `ruishi-prod-acs`，集群 ID `cebc88343a44b4d759aa983a47b787835`；此前只读盘点为 Java 项目，随后新零售和经销商查询已发布到各自 Namespace，变更前须重新盘点实际运行状态 |
 | VPC | `vpc-2zervez1jgscsglpenrzo` |
 | vSwitch | `vsw-2zeagdbk8hizkkdw0ns42`（`172.31.224.0/20`，盘点时可用 IP 4076）；`vsw-2zec5qkbaiafqu3pyuamo`（`172.28.48.0/20`，可用 IP 4085） |
 | 新 ALB | `alb-olyb9enxszy3f42nnn`，公网，DNS `alb-olyb9enxszy3f42nnn.cn-beijing.alb.aliyuncsslb.com`；HTTPS 443 监听 `lsn-3hl3j4qtjt8b1z7jkl`；集群 IngressClass 为 `alb` |
@@ -29,7 +29,7 @@
 - 新 ALB 当前 443 监听只有七个现存 Java Host 规则；用指定 Host/SNI 请求本轮全部九个目标域名，证书校验均通过但均返回 503，符合尚无 .NET 转发规则的现状。当前通配符证书覆盖 `*.svision100.com`，有效期至 2027-02-28 23:59:59 UTC；正式发布时仍须重新核对证书与规则。
 - 2026-09-26 零副本预部署：已使用显式 `ruishi-prod-acr` Profile 核对生产账号并创建 13 个私有镜像仓库；ACS 私有 API 可达且当前身份具备创建 Namespace、Deployment、Service 的权限。`points-mall-front` 的 Codeup API 绑定返回 `SOURCE_ACCOUNT_NOT_AVAILABLE`，需完成代码源绑定后再配置构建。详见[预部署执行记录](zero-replica-predeploy-2026-09-26.md)。
 - 尚未完成：各项目代码会话的完整评审及运行验收；实际启用的外部调用/SDK/白名单清单；NAT 生产网络变更；Worker 及 API 内消费者的交接核对、业务验收。经销商合并 API 已通过私网连接原生产 MySQL、Redis，并以单副本接通 `4l-api.svision100.com`；图片真实上传、管理员登录与维护操作仍待业务验收，详见[发布记录](release-records.md)。
-- 出口复核：目标 VPC 的公网 NAT 网关为 0；七个 vSwitch 共用一张无默认路由的系统表。首次创建 NAT 会自动添加默认路由，影响全部关联 vSwitch 的路径。网站 ECS 与 ACS Pod 同处旧 k vSwitch，但有自己的公网 IP，不是必须新建 Pod 网段的理由，也不纳入本次迁移。现有网段可复用；本版[生产网络变更单](egress-nat-change-order.md)选择新建业务 Pod 网段，以便将目标 Pod 的整段 SNAT 与 ACS 系统 Pod 等其他私网来源隔离。生产网络变更已暂缓。
+- 出口复核：目标 VPC 的公网 NAT 网关为 0；七个旧 vSwitch 仍共用无默认路由的系统表。首次创建 NAT 会自动添加系统默认路由，影响全部关联 vSwitch 的路径。本次已创建两张**未关联业务 vSwitch**的私网/出口自定义表，并复制 Mongo 对等路由；候选新 Pod 网段的数据库白名单、Mongo 回程与 OpenVPN 路由尚未通过[网段门槛](network-constraints-2026-09-26.md)，未迁移旧 vSwitch。
 - 公共出口阶段仍**未采购 NAT/EIP**；经销商单体 API 已复用原生产 RDS、Redis、OSS 的私网路径并创建专用 Ingress。新零售及经销商的实际启动与入口状态以[发布记录](release-records.md)为准；未修改既有 Java 资源。
 
 发布不得以编译通过、Pod Ready、HTTP 401/404 代替真实业务验收。任何一项阻断未消除，保持旧系统运行并停在对应阶段。
