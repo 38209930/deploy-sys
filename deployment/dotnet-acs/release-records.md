@@ -32,11 +32,11 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 
 ## 新零售（第四项）
 
-- 目标：`new-retail` Namespace；`new-retail-front` 1 CPU/2 GiB、`new-retail-back` 0.5 CPU/1 GiB、`new-retail-worker` 0.5 CPU/1 GiB；旧 ECS `i-2ze68mprzc2jzea57xfz` 仍运行。2026-09-26 读回结果：FrontApi、BackApi 各 1/1 Ready；Worker 0/0，无 Service、Ingress 或 Pod。
-- 新 Host：`ns-front-api.svision100.com`、`ns-back-api.svision100.com`。本次没有创建 Host 转发规则；域名尚未接入新 Service。
+- 目标：`new-retail` Namespace；`new-retail-front` 1 CPU/2 GiB、`new-retail-back` 0.5 CPU/1 GiB、`new-retail-worker` 0.5 CPU/1 GiB。2026-09-26 经 ECS API 确认旧 ECS `i-2ze68mprzc2jzea57xfz` 为 `Stopped`；ACS 三个 Deployment 均 1/1 Ready，Worker 保持单副本，无 Service/Ingress。
+- 新 Host：`ns-front-api.svision100.com`、`ns-back-api.svision100.com`。已创建各自精确 Host 的 `new-retail-front-alb`、`new-retail-back-alb`，使用现有 ALB 的 HTTPS 443、ClusterIP Service 8080；两域名直接连接 ALB 时 `/health/live`、`/health/ready` 均返回 200，TLS 校验通过。
 - 源码：`/Volumes/SSD/work/mall/新零售/newsale-api`；分支 `deploy/dotnet-acs-new-retail` 冻结提交 `5ad04591a4701164d9d4b0dcd1d64e011051abb4`，业务基线为 `product/new-retail`，不可误用同远端积分商城的 `release`。ACR 分别使用仓库根目录的 `Dockerfile.frontapi`、`Dockerfile.backapi`、`Dockerfile.worker`，`linux/amd64`，无 `PROJECT` 构建参数。三个构建记录依次为 `01A0DCBD-9EDC-5B77-A49E-538F78D51E29`、`01A0DCC3-49E9-53C3-8DDE-DB2A45746ED7`、`01A0DCC3-4C01-5DFE-88AF-7583B7872294`，均成功且日志确认提交及 Dockerfile。
-- 生产镜像摘要：FrontApi `sha256:552035b32f766fefa0e68682dace4637c046d5aa229e1b127bb35431b15a315b`；BackApi `sha256:a3d4eff38a1e9cea5fd1673b1ae9ff6aea146a1722bfd3417357453c3df27268`；Worker `sha256:b78eb8691895073dba8ac9cdb98e0a94b5ff446da7526d45ac6a3ba2efb6a3ab`。Front、Back 分别挂载专用运行 Secret；两者 `/health/live`、`/health/ready` 经 Service 本机转发均返回 200。Front 暂关闭 Redis 消费者以避免与旧 ECS 并行重复消费；Back 数据库结构就绪检查保持启用，探针超时调整为 25 秒。此为进程与依赖就绪证据，业务接口未验收。
-- 切换阻断：固定 EIP 的公网 NAT 尚未实施，微信、支付及其他公网调用未验收；正式 Host 规则、第三方白名单、登录/下单/支付回调/短信等业务验收、旧 Worker 交接及 24 小时观察均待完成。Worker 保持 0 副本，不得在旧 Worker 退出前启动。
+- 生产镜像摘要：FrontApi `sha256:552035b32f766fefa0e68682dace4637c046d5aa229e1b127bb35431b15a315b`；BackApi `sha256:a3d4eff38a1e9cea5fd1673b1ae9ff6aea146a1722bfd3417357453c3df27268`；Worker `sha256:b78eb8691895073dba8ac9cdb98e0a94b5ff446da7526d45ac6a3ba2efb6a3ab`。Front、Back 分别挂载专用运行 Secret；Worker 挂载 Back 的运行 Secret 至所需配置文件路径，停机宽限 130 秒。旧 ECS 停机后已启用 Front 的 Redis 消费者；Back 数据库结构就绪检查保持启用，探针超时 25 秒。三个 Pod 均无重启；Worker 启动日志无错误，但尚无任务执行结果证据。
+- 出口与业务验收：当前 VPC 无公网 NAT，Front 和 Worker 到微信支付 `api.mch.weixin.qq.com:443` 均超时，到私网 SmsCore `172.27.182.18:3090` 可达。用户指定公网 NAT 和固定 EIP 在另一个任务中处理，本次只完成新零售部署与入口接入。因此登录、下单、支付回调、退款、短信真实投递、第三方白名单、Worker 任务结果及 24 小时观察均待验收；不得将 HTTP 200 的健康检查当作业务通过。
 
 ## 经销商查询（第五项）
 
