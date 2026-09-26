@@ -17,7 +17,7 @@
 
 售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。七个当前 .NET API Host 的公网 HTTPS `/health/ready` 均在 23:39 核验返回 200；部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
 
-AI 自习室 Back 初次仅验证了健康接口，后台前端实际调用时因生产配置缺少 `Security:CorsAllowedOrigins` 被浏览器拦截。已在 Deployment 运行环境中补入 `https://ai-study-manage.svision100.com`、`https://ai-study-biz.svision100.com`、`https://ai-study-h5.svision100.com`，完成滚动更新。三来源预检均返回 204，`POST /auth/login` 返回业务层响应且带正确 CORS 头；`/health/live`、`/health/ready`、`/back/public/info` 均返回 200。镜像 digest 未变更，当前 Back Pod 1/1 Ready、重启次数为 0。自习室后台与 `agent-admin.svision100.com` 分属不同前端和 API：自习室后台使用 `ai-study-manage.svision100.com` → `rsst-back-api.svision100.com`，经销商 PC 使用 `agent-admin.svision100.com` → `rsqapi-bk.svision100.com`；经销商 Origin 不加入自习室 CORS。前端实际业务不可用时，应继续用浏览器实际请求逐接口定位，不能根据构建包内遗留字符串推断线上调用关系。
+AI 自习室 Back 初次仅验证了健康接口，后台前端实际调用时因生产配置缺少 `Security:CorsAllowedOrigins` 被浏览器拦截。实际生产后台来源为 `https://ai-study-admin.svision100.com`；已在 Deployment 运行环境中保留 `https://ai-study-biz.svision100.com`、`https://ai-study-h5.svision100.com`，并补入 `https://ai-study-admin.svision100.com`，完成滚动更新。该来源的预检返回 204，`POST /auth/login` 返回业务层响应且带正确 CORS 头；`/health/live`、`/health/ready`、`/back/public/info` 均返回 200。镜像 digest 未变更，当前 Back Pod 1/1 Ready、重启次数为 0。自习室后台与 `agent-admin.svision100.com` 分属不同前端和 API：自习室后台使用 `ai-study-admin.svision100.com` → `rsst-back-api.svision100.com`，经销商 PC 使用 `agent-admin.svision100.com` → `rsqapi-bk.svision100.com`；经销商 Origin 不加入自习室 CORS。前端实际业务不可用时，应继续用浏览器实际请求逐接口定位，不能根据构建包内遗留字符串推断线上调用关系。
 
 经销商查询的三个 Host 均指向同一个 `agent-query-api:8080`，不是三个独立应用。初次验证发现生产 Secret 缺少 `DealerQuery:AllowedOrigins`，浏览器预检返回 204 但没有 `Access-Control-Allow-Origin`。已通过 ACS Kubernetes API 只更新 `agent-query-api-runtime-config-v3` 的该配置项，加入 `https://rsqh5.svision100.com`、`https://rsqapi-ft.svision100.com`、`https://rsqapi-bk.svision100.com`、`https://agent-admin.svision100.com`，并完成单 Pod 滚动更新；Secret 内容未写入日志。`agent-admin.svision100.com` 的 OSS 页面返回 200，部署 JS 指向 `https://rsqapi-bk.svision100.com`；该域名是经销商查询 PC 页面。`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 的健康接口、城市查询、登录接口以及来自该 PC Origin 的 OPTIONS 预检均返回预期结果。
 
@@ -30,7 +30,7 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 - 目标：`ai-study` Namespace；`ai-study-back` 1 CPU/2 GiB、`ai-study-worker` 0.5 CPU/1 GiB；FrontApi 留旧 ECS `i-2ze2s8pzq0kvqu28iml8`。
 - Host：`rsst-back-api.svision100.com`。当前接入与验收结果见本页顶部；旧 DNS 为 `39.105.188.147`。
 - 源码与构建历史：`/Volumes/SSD/work/mall/ai自习室/prod@aliyun/ai-study-api`；ACS 适配分支 `deploy/dotnet-acs-ai-study` 已推送 `213984d`，交接说明在 `RuishiStore/ACS_DEPLOYMENT.md`。当前 ACS 镜像 digest：BackApi `sha256:f70b88d5f9e9e8c8ea9f77d0e564686226bca7952e3c300a7cbc04862f76ee70`，Worker `sha256:a220a8b88bb8f20ec771d7ea4a8fa258cfb93e171d2073512d7bb249217eb385`；两个 Deployment 均为 1/1 Ready。最终 `release` SHA、Secret 版本、结构版本及业务改动是否已纳入当前镜像，仍需按项目交接记录补齐，不能用适配分支 SHA 代替。
-- 切换关键点：后台登录、卡与账户管理、同步任务、旧 FrontApi 与新 BackApi/Worker 对同一数据库的兼容；CORS 已按三个生产前端来源补齐并完成预检及登录接口验收。旧 Worker 停机及自动拉起、锁和首个到期任务：待验证。适配分支的 Worker 默认为不注册定时任务，开启需 `Worker__ScheduledJobsEnabled=true` 和项目专用 `Worker__QuartzLockName`；新 MySQL 命名锁不约束旧 ECS Worker，旧进程退出仍是硬门槛。
+- 切换关键点：后台登录、卡与账户管理、同步任务、旧 FrontApi 与新 BackApi/Worker 对同一数据库的兼容；CORS 已按实际后台来源 `https://ai-study-admin.svision100.com` 及其他已登记生产来源补齐，并完成预检及登录接口验收。旧 Worker 停机及自动拉起、锁和首个到期任务：待验证。适配分支的 Worker 默认为不注册定时任务，开启需 `Worker__ScheduledJobsEnabled=true` 和项目专用 `Worker__QuartzLockName`；新 MySQL 命名锁不约束旧 ECS Worker，旧进程退出仍是硬门槛。
 - 生产授权、旧服务命令、外呼表、第三方白名单、任务结果、24 小时观察及回滚证据：待验证。
 
 ## 售后工单（第二项）
