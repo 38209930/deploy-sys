@@ -43,8 +43,9 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 - 目标：`agent-query` Namespace 中**一个** `agent-query-api` Deployment（0.5 CPU/1 GiB）、一个 ClusterIP Service，同时承载前台与后台接口；**无 Worker**。旧 ECS `i-2ze6v19gpeg6t864exra` 上的以旧换新不受影响。
 - 正式 Host：`4l-api.svision100.com` 已指向新 ALB；尚未创建该 Host 的 Ingress，未接入正式流量。旧 `rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 是历史入口，不作为本次两个新服务部署。
 - 源码：`/Volumes/SSD/work/mall/经销商查询/agent_query_api_net10`，`release` SHA `5fc6913727c7ab084424bb601f13ee7e5b4acd16`；合并宿主图片上传使用原有 OSS。ACR `agent-query-api` 构建成功，镜像 digest `sha256:064dc0aa46145cf44e907c5567f3bb607139fb17c7063c083e11aa4e0b111ea5`。
-- ACS 已创建单体 Deployment 和 Service，Deployment 固定上述 digest，期望副本 **0**。先前试运行的旧镜像未通过 `/health/ready`：当前生产 MySQL 与 Redis 主机解析到公网 IP，Pod TCP 连接超时。试运行实例已停止；没有创建 Ingress。运行 Secret 已有数据库、Redis 等配置，但尚缺新宿主所需的 OSS 写入凭据；需受控补齐并验证。
-- 上线门槛：MySQL、Redis 从 ACS 可达；OSS 配置安全下发且上传、读取验证；单体 API 的前后台登录、门店查询和维护验收；然后才扩到 1 并接入 `4l-api.svision100.com`。公网 NAT 由独立任务处理，本次不擅自创建。生产写入、回滚及 24 小时观察证据：待验证。
+- ACS 已创建单体 Deployment 和 Service，Deployment 固定上述 digest，期望副本 **0**，没有创建 Ingress。已从旧项目受控源码提取现用 OSS 凭据并下发至专用 Secret `agent-query-api-runtime-config-v2`；新宿主 `/health/live` 为 200。北京 OSS 公网端点从 Pod 超时，官方内网端点 `oss-cn-beijing-internal.aliyuncs.com:443` 可达，v2 已改用内网端点；真实上传仍待验收。
+- 生产 MySQL 与 Redis 主机当前解析到公网 IP，从 Pod 的 TCP 连接均超时，`/health/ready` 返回 503；北京 VPC 此时查询不到公网 NAT。试运行实例已停止，不能将该状态标为上线。
+- 上线门槛：MySQL、Redis 从 ACS 可达；OSS 上传、读取验证；单体 API 的前后台登录、门店查询和维护验收；然后才扩到 1 并接入 `4l-api.svision100.com`。公网 NAT 由独立任务处理，本次不擅自创建。生产写入、回滚及 24 小时观察证据：待验证。
 
 ## 每项完成时补录
 
