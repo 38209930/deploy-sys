@@ -31,7 +31,7 @@
 - 目标：`new-retail` Namespace；`new-retail-front` 1 CPU/2 GiB、`new-retail-back` 0.5 CPU/1 GiB、`new-retail-worker` 0.5 CPU/1 GiB；旧 ECS `i-2ze68mprzc2jzea57xfz`。
 - Host：`rs-store-api-front.svision100.com`、`rs-store-api-back.svision100.com`。旧 DNS 为 `39.105.188.147`；新 ALB 证书握手已验证，Host 规则尚无。
 - 源码：`/Volumes/SSD/work/mall/新零售/newsale-api`；ACS 适配分支 `deploy/dotnet-acs-new-retail` 已推送 `1914b60`，业务基线为 `product/new-retail`，不可误用同远端积分商城的 `release`。三个 Release 编译、相关单测 10/10 通过；Docker 镜像构建未取得完整结果，容器运行未验收。最终生产 SHA、三个 digest、Secret/结构版本：待验证。
-- 切换关键点：登录、下单、支付与回调、优惠券、订单状态推进、短信事件；支付超时状态不明时先查单再补偿：待验证。API/Admin 为容器内 HTTP 8080，具 `/health/live` 与 `/health/ready`；Worker 无 HTTP，Quartz 作业单实例内防重叠，退出最长等待 120 秒。**尚无新 Worker 禁用调度的交付参数**，不得在旧 Worker 退出前以一副本预启动。目标生产库的兼容结构仍需就绪探针实测，第三方 SDK 经代理的行为仍需逐项验证。
+- 切换关键点：登录、下单、支付与回调、优惠券、订单状态推进、短信事件；支付超时状态不明时先查单再补偿：待验证。API/Admin 为容器内 HTTP 8080，具 `/health/live` 与 `/health/ready`；Worker 无 HTTP，Quartz 作业单实例内防重叠，退出最长等待 120 秒。**尚无新 Worker 禁用调度的交付参数**，不得在旧 Worker 退出前以一副本预启动。目标生产库的兼容结构仍需就绪探针实测，第三方 SDK 经 NAT 出口的真实调用及来源 EIP 仍需逐项验证。
 - 生产授权、外呼白名单、旧 Worker 交接、24 小时观察及回滚证据：待验证。
 
 ## 经销商查询（第五项）

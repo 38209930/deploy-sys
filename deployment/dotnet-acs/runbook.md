@@ -6,15 +6,15 @@
 
 1. 刷新每个目标仓库远端引用，复核提交祖先关系；整理本机未提交业务修改，排除生成文件、个人配置和客户数据。新零售与积分商城虽然共用 Codeup 远端，但业务分支不同，必须分别冻结 SHA。代码会话完成评审、Release 构建、必要测试后再确认 `release` 基线。
 2. 锁定每角色镜像 **digest**、构建 run 和源码 SHA；容器内不得包含生产配置。确认 Linux x64、固定 SDK/ASP.NET Runtime 版本、非 root 运行、可写临时目录和日志路径。Worker 无 HTTP Service。
-3. 按[公共出口实施清单](egress-proxy.md)完成**实际启用**的生产外呼表、SDK 代理证据、供应商白名单、单机恢复选择和预算；必需外呼缺项则不采购或切换该项目。未启用的历史代码路径明确标注为禁用。
+3. 按[公共 NAT 出口手册](egress-nat.md)完成**实际启用**的生产外呼表、SDK 真实调用证据、供应商白名单、路由及来源隔离方案和预算；必需外呼缺项则不接入该项目。未启用的历史代码路径明确标注为禁用。
 4. 冻结数据库结构与配置版本。证明旧新 API 并行期兼容、连接池总数可承受、无启动自动迁移和不受控 HostedService。经销商还须完成独立库数据转换演练和前端契约验收。
 5. 记录旧服务实例、启动/停机/自动拉起机制和回滚命令；确定旧 Worker 已执行事件查询方式。各项目业务负责人确定验收场景及维护窗口。确认正式 DNS 的管理账号、记录修改人和回滚权限；当前 CLI 身份对 `svision100.com` 返回 `IncorrectDomainUser`，不能承担 DNS 切流。
 
-## 1. 出口代理准备
+## 1. 公共 NAT 出口准备
 
-逐条执行[公共出口实施清单](egress-proxy.md)的 A～C 阶段。先核实没有已建的同用途资源，再取得明确的付费及生产变更授权，建立独立 ECS/EIP、来源限制、目的域名 ACL 与认证。EIP 绑定后要实测公网无法访问代理端口；私网安全组来源是共享 Pod 网段，不能把它误认为 .NET 专属隔离。项目侧接入按清单 D 阶段逐项验证，不以 `curl` 成功代替 SDK 真实调用。单机 RTO 未演练或业务不可接受时，先完成高可用方案再启动依赖公网的生产项目。
+先执行[公共 NAT 出口手册](egress-nat.md)的只读核对及路由/来源隔离修订。**当前七个 vSwitch 共用一张系统路由表，首次建 NAT 会自动改变其默认路由，尚不具备生产创建条件。** 修订方案、受影响资源、窗口、回滚和实时报价获批后，才按手册通过 API 创建跨可用区 NAT、一个 EIP及精确 SNAT；诊断 Pod、七个 Java 项目和新 .NET 项目逐项验证。不能用 `curl` 出网代替 SDK 及供应商侧来源 IP 验收。
 
-2026-09-26 的一次 ECS+盘 `DescribePrice` 查询约为 **¥0.36291/小时**，EIP、流量与折扣仍待核价；10 Mbps 只是待验证的上限假设。不要直接为当前与 Java 共用的两个 vSwitch 创建公网 SNAT。
+北京官方标价的跨可用区 NAT 为 ¥0.23/小时，加 EIP 保有及流量；本轮不采购出口 ECS。10 Mbps 是初始上限，先用外呼表和实测带宽复核。不得对现有混用的 ACS `/20` 网段直接创建整段 SNAT。
 
 ## 2. 项目零副本资源
 
@@ -22,7 +22,7 @@
 
 1. 创建项目 Namespace、ServiceAccount 与 ResourceQuota。只在 ACR 凭据助手的 `watchNamespace` 和 `serviceAccount` 追加该项目同名条目，保留旧列表；拉取权限验收后复查既有项目。
 2. 建立每角色单独的 ACR 仓库和 `release` 固定 SHA 构建规则。构建失败时先排查公网依赖和 Dockerfile，不修改生产服务。镜像引用使用 digest。需核对仓库存储量、构建并发与产生费用。
-3. 在获得具体授权后，通过受控通道下发**项目专用**生产 Secret；只记录名称、键、版本/摘要，不打印值。确认私网数据库/Redis/Mongo、SmsCore `172.27.182.18:3090`、代理及 `NO_PROXY` 值的语义；不要假定 SDK 都支持 CIDR 格式。变更 Secret 后显式滚动目标 Deployment。
+3. 在获得具体授权后，通过受控通道下发**项目专用**生产 Secret；只记录名称、键、版本/摘要，不打印值。确认私网数据库/Redis/Mongo、SmsCore `172.27.182.18:3090` 仍走私网，第三方实际调用走已核验的 NAT EIP；检查并定向处理旧代理变量及 SDK 显式代理设置。变更 Secret 后显式滚动目标 Deployment。
 4. 生成 Front/Admin/Worker Deployment，均以 `replicas: 0` 创建；`strategy.type: Recreate`、`requests=limits`、无 HPA。API 目标为容器 HTTP `8080`，逐项目实测监听与 Service `targetPort` 一致；售后工单当前 Kestrel 配置为 Front `3080`、Admin `3081`，若沿用 8080，需显式覆盖 `Kestrel__EndPoints__Http__Url` 并验证，单设 `ASPNETCORE_URLS` 不足以证明已覆盖。Worker 不创建 Service/Ingress。
 5. API 探针：`/health/live` 只判进程；`/health/ready` 检查必要数据库、Redis 和所需结构。startup 5 秒×60、liveness 10 秒×3、readiness 5 秒×3，超时均 2 秒；如果实测启动时间不同，先更新清单与维护窗口。Worker 使用启动预检、心跳和任务结果，不配置伪 HTTP 探针。
 6. `ASPNETCORE_ENVIRONMENT` 和 `DOTNET_ENVIRONMENT` 均为 `Production`；HTTP 绑定 `0.0.0.0:8080`；不以仓库默认配置覆盖 Secret。可信代理范围按 ALB **当前** Local IP 精确配置，`ForwardLimit=1`，实际经 ALB 请求核对 scheme、来源 IP、Cookie Secure、重定向和 CORS。
@@ -54,4 +54,4 @@
 
 - [ACS Pod 网络路径](https://help.aliyun.com/zh/cs/user-guide/accessing-the-external-network-in-the-pod)、[ResourceQuota](https://help.aliyun.com/zh/cs/user-guide/using-capacity-scheduling)、[ACS 计费](https://help.aliyun.com/zh/cs/product-overview/product-billing-rules)
 - [ALB Ingress 工作原理](https://help.aliyun.com/zh/slb/application-load-balancer/alb-ingress)、[Kubernetes Deployment 替代 Pod 的行为](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
-- [ASP.NET Core 健康检查](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/health-checks?view=aspnetcore-10.0)、[可信代理与转发头](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0)、[Squid ACL](https://www.squid-cache.org/Doc/config/http_access/)
+- [ASP.NET Core 健康检查](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/health-checks?view=aspnetcore-10.0)、[可信代理与转发头](https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/proxy-load-balancer?view=aspnetcore-10.0)、[公网 NAT 与路由](https://help.aliyun.com/zh/nat-gateway/user-guide/use-internet-nat-gateway-for-public-network-access)
