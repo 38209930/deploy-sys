@@ -32,11 +32,11 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 
 ## 新零售（第四项）
 
-- 目标：`new-retail` Namespace；`new-retail-front` 1 CPU/2 GiB、`new-retail-back` 0.5 CPU/1 GiB、`new-retail-worker` 0.5 CPU/1 GiB；旧 ECS `i-2ze68mprzc2jzea57xfz`。
-- Host：`rs-store-api-front.svision100.com`、`rs-store-api-back.svision100.com`。旧 DNS 为 `39.105.188.147`；新 ALB 证书握手已验证，Host 规则尚无。
-- 源码：`/Volumes/SSD/work/mall/新零售/newsale-api`；ACS 适配分支 `deploy/dotnet-acs-new-retail` 已推送 `1914b60`，业务基线为 `product/new-retail`，不可误用同远端积分商城的 `release`。三个 Release 编译、相关单测 10/10 通过；Docker 镜像构建未取得完整结果，容器运行未验收。最终生产 SHA、三个 digest、Secret/结构版本：待验证。
-- 切换关键点：登录、下单、支付与回调、优惠券、订单状态推进、短信事件；支付超时状态不明时先查单再补偿：待验证。API/Admin 为容器内 HTTP 8080，具 `/health/live` 与 `/health/ready`；Worker 无 HTTP，Quartz 作业单实例内防重叠，退出最长等待 120 秒。**尚无新 Worker 禁用调度的交付参数**，不得在旧 Worker 退出前以一副本预启动。目标生产库的兼容结构仍需就绪探针实测，第三方 SDK 经 NAT 出口的真实调用及来源 EIP 仍需逐项验证。
-- 生产授权、外呼白名单、旧 Worker 交接、24 小时观察及回滚证据：待验证。
+- 目标：`new-retail` Namespace；`new-retail-front` 1 CPU/2 GiB、`new-retail-back` 0.5 CPU/1 GiB、`new-retail-worker` 0.5 CPU/1 GiB；旧 ECS `i-2ze68mprzc2jzea57xfz` 仍运行。2026-09-26 读回结果：FrontApi、BackApi 各 1/1 Ready；Worker 0/0，无 Service、Ingress 或 Pod。
+- 新 Host：`ns-front-api.svision100.com`、`ns-back-api.svision100.com`。本次没有创建 Host 转发规则；域名尚未接入新 Service。
+- 源码：`/Volumes/SSD/work/mall/新零售/newsale-api`；分支 `deploy/dotnet-acs-new-retail` 冻结提交 `5ad04591a4701164d9d4b0dcd1d64e011051abb4`，业务基线为 `product/new-retail`，不可误用同远端积分商城的 `release`。ACR 分别使用仓库根目录的 `Dockerfile.frontapi`、`Dockerfile.backapi`、`Dockerfile.worker`，`linux/amd64`，无 `PROJECT` 构建参数。三个构建记录依次为 `01A0DCBD-9EDC-5B77-A49E-538F78D51E29`、`01A0DCC3-49E9-53C3-8DDE-DB2A45746ED7`、`01A0DCC3-4C01-5DFE-88AF-7583B7872294`，均成功且日志确认提交及 Dockerfile。
+- 生产镜像摘要：FrontApi `sha256:552035b32f766fefa0e68682dace4637c046d5aa229e1b127bb35431b15a315b`；BackApi `sha256:a3d4eff38a1e9cea5fd1673b1ae9ff6aea146a1722bfd3417357453c3df27268`；Worker `sha256:b78eb8691895073dba8ac9cdb98e0a94b5ff446da7526d45ac6a3ba2efb6a3ab`。Front、Back 分别挂载专用运行 Secret；两者 `/health/live`、`/health/ready` 经 Service 本机转发均返回 200。Front 暂关闭 Redis 消费者以避免与旧 ECS 并行重复消费；Back 数据库结构就绪检查保持启用，探针超时调整为 25 秒。此为进程与依赖就绪证据，业务接口未验收。
+- 切换阻断：固定 EIP 的公网 NAT 尚未实施，微信、支付及其他公网调用未验收；正式 Host 规则、第三方白名单、登录/下单/支付回调/短信等业务验收、旧 Worker 交接及 24 小时观察均待完成。Worker 保持 0 副本，不得在旧 Worker 退出前启动。
 
 ## 经销商查询（第五项）
 
