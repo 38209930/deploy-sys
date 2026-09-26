@@ -1,6 +1,6 @@
 # ACS 公共公网出口：执行手册与当前门槛
 
-状态：**已创建两张未关联业务 vSwitch 的自定义路由表并复制 MongoDB 对等路由；NAT、EIP、新 vSwitch 和 SNAT 未创建，生产项目尚未接入。数据库与 OpenVPN 门槛待完成。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。具体资源、拓扑、顺序与回滚以[生产网络变更单](egress-nat-change-order.md)及[网段核对执行记录](network-constraints-2026-09-26.md)为准。
+状态：**已创建两张自定义路由表、三个隔离新 vSwitch，并完成 ACS 默认选址护栏及新网段私网诊断；NAT、EIP、SNAT 未创建，旧业务网络与 Pod 未迁移。MongoDB 新网段回程路由和白名单待处理。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。具体资源、拓扑、顺序与回滚以[生产网络变更单](egress-nat-change-order.md)及[网段核对执行记录](network-constraints-2026-09-26.md)为准。
 
 ## 1. 固定架构与边界
 
@@ -16,11 +16,11 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 |---|---|
 | ACS / VPC | `cebc88343a44b4d759aa983a47b787835` / `vpc-2zervez1jgscsglpenrzo`，北京 |
 | ACS 当前两个 vSwitch | `vsw-2zeagdbk8hizkkdw0ns42`，北京 k，`172.31.224.0/20`；`vsw-2zec5qkbaiafqu3pyuamo`，北京 i，`172.28.48.0/20` |
-| VPC 路由 | 系统路由表 `vtb-2zebvv47akvfr0cq15njq` 仍关联七个旧 vSwitch；无 `0.0.0.0/0`。另有两张已创建但未关联的自定义表，均保留本地、服务及 `10.0.0.0/24` 对等连接路由；详见网段核对执行记录 |
+| VPC 路由 | 系统表 `vtb-2zebvv47akvfr0cq15njq` 仍关联七个旧 vSwitch 和 NAT 专用新 vSwitch；无 `0.0.0.0/0`。出口自定义表关联两个新 Pod vSwitch；另一自定义表尚无关联；均保留本地、服务和 MongoDB 对等路由 |
 | 公网 NAT / EIP | 公网 NAT 数量为 0；现有 EIP 均已绑定其他资源，不可直接复用 |
 | 范围外来源 | 网站 ECS `i-2ze1j9z5b6vggyjr4bxv` 的私网 IP `172.31.238.203` 落在 ACS 北京 k 的 `/20` 内；同一系统路由表还服务其他五个 vSwitch |
 | SmsCore | ECS `i-2ze38hdx1sufodad2kz0`，私网 `172.27.182.18`，实例自带公网地址 `39.107.141.33`；**该地址不是本次新 EIP**。供应商观察到的实际源地址、白名单仍待核对 |
-| ACS 运行配置 | `acs-profile` 目前只有旧 k/i 两个 vSwitch，`selectors` 为空；八个运行中的 Java Pod/Deployment 全部显式指定旧 k vSwitch，均为 1 副本且可用 |
+| ACS 运行配置 | `acs-profile` 保留旧 k/i 并追加新 k/i，默认 selector 已实测仍选旧 k/i；10 个现有运行中业务 Pod 未迁移，两区诊断 Pod 已清理 |
 
 **生产创建阻断：**[阿里云 CreateNatGateway 文档](https://help.aliyun.com/zh/nat-gateway/developer-reference/api-vpc-2016-04-28-createnatgateway-natgws)说明，首次创建增强型公网 NAT 会自动给 VPC 系统路由表加入指向 NAT 的 `0.0.0.0/0`。官方进一步说明，系统路由会引导关联的全部 vSwitch 流量；没有匹配 SNAT 的来源可能无法访问公网。[路由与 SNAT 粒度说明](https://help.aliyun.com/zh/nat-gateway/user-guide/use-internet-nat-gateway-for-public-network-access)。因此“先给诊断 Pod 配 `/32` SNAT”**不能隔离创建 NAT 时的自动路由影响**。当前七个 vSwitch 均使用系统表，直接创建会改变本次范围外来源的路由；本手册禁止按原顺序继续阶段 B。网站 ECS 有自己的公网 IP，按官方优先级继续使用自身公网出口；它不是必须新建 Pod 网段的理由。选择新业务网段是为了避免旧网段的 ACS 系统 Pod 等其他私网来源被整段 SNAT 纳入。复用旧网段在技术上可行，但需要单独确认来源范围和路由方案。不能把 Namespace 视为 NAT 隔离边界。
 
@@ -48,9 +48,9 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 每个写 API 保存 RequestId、参数摘要、资源 ID、前后状态；接口支持时使用固定 ClientToken，结果不明先只读查询。完整逐步门槛见[生产网络变更单](egress-nat-change-order.md)。
 
-1. 完成[数据库与 OpenVPN 网段门槛](network-constraints-2026-09-26.md)及实时报价、容量核验；两张自定义表和 `10.0.0.0/24` 对等连接路由已准备，重读确认后逐个迁走七个旧 vSwitch，核实系统表不再服务旧资源。
-2. 网段冻结后建两个业务 Pod 专用 vSwitch、一个 NAT 专用 vSwitch，并把 Pod vSwitch 关联已创建的出口自定义表；创建增强型公网 NAT，显式使用 `EipBindMode=NAT`，申请并绑定单一 EIP；仅出口表和 NAT 所在系统表有默认路由。
-3. 先设置 ACS 旧 k/i 默认选址护栏，再追加两个业务 Pod vSwitch。新 k/i 诊断 Pod 各使用 `/32` 临时 SNAT验证固定 EIP和私网；随后仅对两个**新** vSwitch 建稳定 SNAT并清理诊断条目。
+1. 完成[MongoDB 新网段连通门槛](network-constraints-2026-09-26.md)及实时报价、容量核验；重读三张表，逐个迁走七个旧 vSwitch，核实系统表不再服务旧业务资源。本机 OpenVPN 仅在需要直连新 Pod 时调整。
+2. 两个业务 Pod 专用 vSwitch、一个 NAT 专用 vSwitch 已创建，Pod vSwitch 已关联出口表；隔离旧业务路由并确认后创建增强型公网 NAT，显式使用 `EipBindMode=NAT`，申请并绑定单一 EIP；仅出口表和 NAT 所在系统表有默认路由。
+3. ACS 旧 k/i 默认选址护栏及两个新业务 Pod vSwitch 已配置。MongoDB 私网复测通过后，新 k/i 诊断 Pod 各使用 `/32` 临时 SNAT 验证固定 EIP；随后仅对两个**新** vSwitch 建稳定 SNAT 并清理诊断条目。
 4. 按 DGYE → VET → STOPMP → ETBST → DDMP → Yangu → M1X 逐项把已通过业务门槛的 Deployment 显式迁入新 vSwitch。每次验收真实 SDK外呼、私网、ALB、SmsCore 和任务状态；M1X 双角色分别核对。全部观察至少 24 小时并覆盖关键任务周期。
 5. .NET 按 AI → 售后工单 → 积分商城 → 新零售 → 经销商顺序迁移，各项目代码交付、配置、Worker/消费者交接及业务验收另按[发布手册](runbook.md)执行。
 
@@ -76,4 +76,4 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 `变更单 / 授权对象与范围 / 时间窗口 / 操作人 / 前置路由和资源快照 / 路由隔离方案 / CIDR与vSwitch / NAT及EIP资源ID / RequestId及ClientToken摘要 / SNAT来源清单 / 各项目配置版本与镜像SHA / 外呼与私网验收证据 / 供应商白名单 / 告警通知测试 / 回滚演练 / 24小时观察 / 实账`。
 
-除两张未关联的路由表及其对等路由外，生产创建、项目生效配置、短信旧通道状态及真实业务调用均为**待验证**，不能将本手册中的目标设计写成已上线事实。
+除已记录的路由表、新 vSwitch、ACS 选址护栏和数据库白名单外，NAT/EIP/SNAT、项目生效配置、短信旧通道状态及真实业务调用均为**待验证**，不能将本手册中的目标设计写成已上线事实。

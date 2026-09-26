@@ -17,7 +17,7 @@
 | vSwitch | `vsw-2zeagdbk8hizkkdw0ns42`（`172.31.224.0/20`，盘点时可用 IP 4076）；`vsw-2zec5qkbaiafqu3pyuamo`（`172.28.48.0/20`，可用 IP 4085） |
 | 新 ALB | `alb-olyb9enxszy3f42nnn`，公网，DNS `alb-olyb9enxszy3f42nnn.cn-beijing.alb.aliyuncsslb.com`；HTTPS 443 监听 `lsn-3hl3j4qtjt8b1z7jkl`；集群 IngressClass 为 `alb` |
 | ACR | 企业版经济型 `ruishi-prod`，实例 `cri-73ffxebpi6ruw6sn`；`ruishi-dotnet-prod` 已创建，本轮 13 个私有镜像仓库已通过 API 创建；代码源、构建规则和镜像仍待完成 |
-| 既有应用 | DGYE、VET、STOPMP、ETBST、DDMP、Yangu、M1X 共七个 Namespace、八个 Deployment；2026-09-26 只读盘点均为期望 1、Ready 1。SmsCore 仍在 ECS |
+| 既有应用 | 2026-09-26 复核为 10 个运行中业务 Pod：ETBST、DDMP、STOPMP、Yangu、M1X API/Worker、新零售三个角色及经销商 API；DGYE、VET 当前零副本。SmsCore 仍在 ECS |
 
 上述内容由只读云 API/集群查询得到；在每次生产变更前需重新核对。尤其 ALB 的 Local IP 可能变化，可信代理地址必须在发布前按实时地址刷新，并用实际请求验证。不得把整个 Pod 子网当可信反向代理来源。
 
@@ -26,10 +26,10 @@
 ## 当前进度及阻断项
 
 - 已完成：五项目范围、初始规格、旧域名和实例盘点；同仓库的新零售/积分商城基线差异已识别；五项目代码适配已交给各自独立会话。AI 自习室、积分商城、新零售、售后工单的适配分支已交付且目标 Release 构建或 publish 通过，镜像运行与生产业务尚未验收。
-- 新 ALB 当前 443 监听只有七个现存 Java Host 规则；用指定 Host/SNI 请求本轮全部九个目标域名，证书校验均通过但均返回 503，符合尚无 .NET 转发规则的现状。当前通配符证书覆盖 `*.svision100.com`，有效期至 2027-02-28 23:59:59 UTC；正式发布时仍须重新核对证书与规则。
+- ALB 的目标 Host、证书和后端规则须在每个项目发布时重新核对；此前“全部 .NET 目标域名均返回 503”的预部署记录已不适用于现已运行的新零售和经销商查询。此前核验的通配符证书覆盖 `*.svision100.com`，有效期至 2027-02-28 23:59:59 UTC；正式发布仍须重新核对。
 - 2026-09-26 零副本预部署：已使用显式 `ruishi-prod-acr` Profile 核对生产账号并创建 13 个私有镜像仓库；ACS 私有 API 可达且当前身份具备创建 Namespace、Deployment、Service 的权限。`points-mall-front` 的 Codeup API 绑定返回 `SOURCE_ACCOUNT_NOT_AVAILABLE`，需完成代码源绑定后再配置构建。详见[预部署执行记录](zero-replica-predeploy-2026-09-26.md)。
 - 尚未完成：各项目代码会话的完整评审及运行验收；实际启用的外部调用/SDK/白名单清单；NAT 生产网络变更；Worker 及 API 内消费者的交接核对、业务验收。经销商合并 API 已通过私网连接原生产 MySQL、Redis，并以单副本接通 `4l-api.svision100.com`；图片真实上传、管理员登录与维护操作仍待业务验收，详见[发布记录](release-records.md)。
-- 出口复核：目标 VPC 的公网 NAT 网关为 0；七个旧 vSwitch 仍共用无默认路由的系统表。首次创建 NAT 会自动添加系统默认路由，影响全部关联 vSwitch 的路径。本次已创建两张**未关联业务 vSwitch**的私网/出口自定义表，并复制 Mongo 对等路由；候选新 Pod 网段的数据库白名单、Mongo 回程与 OpenVPN 路由尚未通过[网段门槛](network-constraints-2026-09-26.md)，未迁移旧 vSwitch。
+- 出口复核：目标 VPC 的公网 NAT 网关为 0；七个旧 vSwitch 仍共用无默认路由的系统表。首次创建 NAT 会自动添加系统默认路由，影响全部关联 vSwitch 的路径。本次已创建两张私网/出口自定义表、三个隔离新 vSwitch，并配置 ACS 默认选址护栏。新网段到 MySQL、Redis、SmsCore 私网 TCP 已双区通过；MongoDB 因对端缺回程路由和白名单尚不通。OpenVPN 的本机直连新 Pod 路由不阻断云侧诊断。见[网段记录](network-constraints-2026-09-26.md)。旧 vSwitch 和业务 Pod 未迁移。
 - 公共出口阶段仍**未采购 NAT/EIP**；经销商单体 API 已复用原生产 RDS、Redis、OSS 的私网路径并创建专用 Ingress。新零售及经销商的实际启动与入口状态以[发布记录](release-records.md)为准；未修改既有 Java 资源。
 
 发布不得以编译通过、Pod Ready、HTTP 401/404 代替真实业务验收。任何一项阻断未消除，保持旧系统运行并停在对应阶段。
