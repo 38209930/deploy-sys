@@ -1,6 +1,6 @@
 # ACS 公共公网出口：执行手册与当前门槛
 
-状态：**已创建两张自定义路由表、三个隔离新 vSwitch，并完成 ACS 默认选址护栏及新网段私网诊断；MongoDB 对端回程路由和白名单已补齐，双区至双节点 TCP 验证通过；NAT、EIP、SNAT 未创建，旧业务网络与 Pod 未迁移。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。具体资源、拓扑、顺序与回滚以[生产网络变更单](egress-nat-change-order.md)及[网段核对执行记录](network-constraints-2026-09-26.md)为准。
+状态：**跨可用区 NAT、固定 EIP、旧业务路由隔离和两个新 Pod vSwitch 的稳定 SNAT 已创建并完成网络验收；原有业务 Pod 未迁移，项目 SDK 与业务验收待执行。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。实际资源和验证证据见[网络实施记录](egress-nat-execution-2026-09-26.md)，准备及回滚细节见[生产网络变更单](egress-nat-change-order.md)和[网段记录](network-constraints-2026-09-26.md)。
 
 ## 1. 固定架构与边界
 
@@ -10,19 +10,19 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 范围：已上线 DGYE、VET、STOPMP、ETBST、DDMP、Yangu、M1X；随后迁移 AI 自习室、售后工单、积分商城、新零售、经销商查询。AI FrontApi、以旧换新及 SmsCore 保留 ECS 和原出口。本次不改项目业务代码、支付协议、数据库结构及任务调度；发现缺口交对应项目会话，未修复前停止该来源接入。
 
-## 2. 2026-09-26 只读核对结果
+## 2. 2026-09-26 网络实施状态
 
 | 对象 | 已核实事实 |
 |---|---|
 | ACS / VPC | `cebc88343a44b4d759aa983a47b787835` / `vpc-2zervez1jgscsglpenrzo`，北京 |
 | ACS 当前两个 vSwitch | `vsw-2zeagdbk8hizkkdw0ns42`，北京 k，`172.31.224.0/20`；`vsw-2zec5qkbaiafqu3pyuamo`，北京 i，`172.28.48.0/20` |
-| VPC 路由 | 系统表 `vtb-2zebvv47akvfr0cq15njq` 仍关联七个旧 vSwitch 和 NAT 专用新 vSwitch；无 `0.0.0.0/0`。出口自定义表关联两个新 Pod vSwitch；另一自定义表尚无关联；均保留本地、服务和 MongoDB 对等路由 |
-| 公网 NAT / EIP | 公网 NAT 数量为 0；现有 EIP 均已绑定其他资源，不可直接复用 |
+| VPC 路由 | 七个旧 vSwitch 已关联无默认路由的 `vtb-2ze9057j04btdfr3bofhy`；系统表只关联 NAT 专用 vSwitch；两个新 Pod vSwitch 关联 `vtb-2zedknif7nxu7z397b4o6`。系统表与出口表的默认路由指向同一 NAT，旧业务表保留本地、服务和 MongoDB 对等路由且无默认路由 |
+| 公网 NAT / EIP | `ngw-2zetnd6golba2sju2q7jo`，跨可用区增强型；EIP `39.96.67.239` / `eip-2zeapte07xmvayr4852h5`，普通 BGP、按流量计费、10 Mbps 上限；仅两个新 Pod vSwitch 有稳定 SNAT |
 | 范围外来源 | 网站 ECS `i-2ze1j9z5b6vggyjr4bxv` 的私网 IP `172.31.238.203` 落在 ACS 北京 k 的 `/20` 内；同一系统路由表还服务其他五个 vSwitch |
 | SmsCore | ECS `i-2ze38hdx1sufodad2kz0`，私网 `172.27.182.18`，实例自带公网地址 `39.107.141.33`；**该地址不是本次新 EIP**。供应商观察到的实际源地址、白名单仍待核对 |
 | ACS 运行配置 | `acs-profile` 保留旧 k/i 并追加新 k/i，默认 selector 已实测仍选旧 k/i；10 个现有运行中业务 Pod 未迁移，两区诊断 Pod 已清理 |
 
-**生产创建阻断：**[阿里云 CreateNatGateway 文档](https://help.aliyun.com/zh/nat-gateway/developer-reference/api-vpc-2016-04-28-createnatgateway-natgws)说明，首次创建增强型公网 NAT 会自动给 VPC 系统路由表加入指向 NAT 的 `0.0.0.0/0`。官方进一步说明，系统路由会引导关联的全部 vSwitch 流量；没有匹配 SNAT 的来源可能无法访问公网。[路由与 SNAT 粒度说明](https://help.aliyun.com/zh/nat-gateway/user-guide/use-internet-nat-gateway-for-public-network-access)。因此“先给诊断 Pod 配 `/32` SNAT”**不能隔离创建 NAT 时的自动路由影响**。当前七个 vSwitch 均使用系统表，直接创建会改变本次范围外来源的路由；本手册禁止按原顺序继续阶段 B。网站 ECS 有自己的公网 IP，按官方优先级继续使用自身公网出口；它不是必须新建 Pod 网段的理由。选择新业务网段是为了避免旧网段的 ACS 系统 Pod 等其他私网来源被整段 SNAT 纳入。复用旧网段在技术上可行，但需要单独确认来源范围和路由方案。不能把 Namespace 视为 NAT 隔离边界。
+[阿里云 CreateNatGateway 文档](https://help.aliyun.com/zh/nat-gateway/developer-reference/api-vpc-2016-04-28-createnatgateway-natgws)说明首次创建增强型公网 NAT 会给 VPC 系统路由表自动加入指向 NAT 的 `0.0.0.0/0`。实施前已逐个把旧七个 vSwitch 迁入路由内容相同、无默认路由的自定义表；系统表随后只承载 NAT 专用 vSwitch。新网段的 vSwitch 级 SNAT 仅覆盖经明确选址的新 Pod；Namespace 本身不构成 NAT 来源隔离。实际路由和读回见[实施记录](egress-nat-execution-2026-09-26.md)。
 
 ### 已确定的隔离设计
 
@@ -44,13 +44,13 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 任何生产外呼清单缺失、旧短信通道仍启用、资金写请求超时重试行为不明、告警接收渠道未落实，均阻断该项目的生产来源 SNAT。不能用 `curl` 出网成功替代真实 SDK、签名、回调和业务结果验收。
 
-## 4. 获批后的 API 实施顺序
+## 4. API 实施顺序与当前进度
 
 每个写 API 保存 RequestId、参数摘要、资源 ID、前后状态；接口支持时使用固定 ClientToken，结果不明先只读查询。完整逐步门槛见[生产网络变更单](egress-nat-change-order.md)。
 
-1. [MongoDB 新网段 TCP 连通](network-constraints-2026-09-26.md)已验证；后续核实实时报价和容量，重读三张表，逐个迁走七个旧 vSwitch，核实系统表不再服务旧业务资源。本机 OpenVPN 仅在需要直连新 Pod 时调整。
-2. 两个业务 Pod 专用 vSwitch、一个 NAT 专用 vSwitch 已创建，Pod vSwitch 已关联出口表；隔离旧业务路由并确认后创建增强型公网 NAT，显式使用 `EipBindMode=NAT`，申请并绑定单一 EIP；仅出口表和 NAT 所在系统表有默认路由。
-3. ACS 旧 k/i 默认选址护栏及两个新业务 Pod vSwitch 已配置，MongoDB 私网 TCP 复测已通过。后续新 k/i 诊断 Pod 各使用 `/32` 临时 SNAT 验证固定 EIP；随后仅对两个**新** vSwitch 建稳定 SNAT 并清理诊断条目。
+1. **已完成：**MongoDB 新网段回程、白名单及双区 TCP 检查；实时报价、路由内容对比；七个旧 vSwitch 逐个迁入旧业务表。本机 OpenVPN 仅在需要直连新 Pod 时另行调整。
+2. **已完成：**创建隔离的新 Pod/NAT vSwitch、跨可用区增强型公网 NAT（`EipBindMode=NAT`）、单一 EIP；系统表默认路由只作用于 NAT 专用 vSwitch，出口表默认路由只作用于两个新 Pod vSwitch。
+3. **已完成：**ACS 默认旧 k/i 选址护栏、新 k/i 诊断 Pod 临时 `/32` 测试和重建、两个新 vSwitch 的稳定 SNAT；临时条目与诊断 Pod 均已清理。两区私网和固定 EIP 验证见[实施记录](egress-nat-execution-2026-09-26.md)。
 4. 按 DGYE → VET → STOPMP → ETBST → DDMP → Yangu → M1X 逐项把已通过业务门槛的 Deployment 显式迁入新 vSwitch。每次验收真实 SDK外呼、私网、ALB、SmsCore 和任务状态；M1X 双角色分别核对。全部观察至少 24 小时并覆盖关键任务周期。
 5. .NET 按 AI → 售后工单 → 积分商城 → 新零售 → 经销商顺序迁移，各项目代码交付、配置、Worker/消费者交接及业务验收另按[发布手册](runbook.md)执行。
 
@@ -68,7 +68,7 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 监控 NAT 状态、SNAT 失败/连接容量、EIP 带宽、项目外呼失败率/P95、429/超时及支付待确认、短信失败、ERP 积压。带宽持续 5 分钟超过上限 70%预警；超过 85%且出现业务失败时处理。5 分钟至少 20 次调用且失败率超过 5%告警。告警渠道须先实测；日志初始保留 7 天且不记录密钥、手机号、完整报文。
 
-按北京官方标价估算，跨可用区 NAT `0.23 元/小时`、EIP 保有约 `0.02 元/小时`，720 小时固定费约 **180 元**；再加 `0.23 元 × NAT 双向处理 GiB` 与约 `0.80 元 × 公网出流量 GiB`。流量口径和账单优惠以下单页及当月账单为准。首月 400 元预警、600 元升级复核；阈值不自动断网。[NAT 计费](https://help.aliyun.com/zh/nat-gateway/nat-gateway-billing)、[EIP 计费](https://help.aliyun.com/zh/eip/pay-as-you-go/)、[CDT](https://help.aliyun.com/zh/cdt/internet-data-transfers/)。
+按北京官方标价估算，跨可用区 NAT `0.23 元/小时`、EIP 保有约 `0.02 元/小时`，720 小时固定费约 **180 元**。本次账号报价 API 对 NAT 实例费显示当前优惠后 `0.1955 元/小时`，对应 720 小时约 `140.76 元`；加按官方标价估算的 EIP 保有费约 `14.40 元`，静态项合计约 `155.16 元`，**另计** NAT 双向处理量与 EIP 公网出流量。账单优惠和流量单价以实际账单为准。首月 400 元预警、600 元升级复核；阈值不自动断网。[NAT 计费](https://help.aliyun.com/zh/nat-gateway/nat-gateway-billing)、[EIP 计费](https://help.aliyun.com/zh/eip/pay-as-you-go/)、[CDT](https://help.aliyun.com/zh/cdt/internet-data-transfers/)。
 
 诊断 `/32` 异常时撤销相应临时 SNAT，不影响旧网段。业务项目异常时优先恢复该 Deployment 的旧选址并检查已发生外部结果；不得直接撤销其他项目依赖的共享 SNAT。NAT 创建后，旧 vSwitch **不得直接解绑回系统表**，因为系统表已有默认路由；共享网络回滚需按[变更单](egress-nat-change-order.md)的阶段顺序操作，并逐项复核范围外来源、全部 Java、SmsCore。保留 EIP，不新申请出口。Worker 回滚先停新后启旧，未知支付/退款/短信结果先查证。跨可用区切换可能中断现有连接，不能承诺零中断。
 
@@ -76,4 +76,4 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 `变更单 / 授权对象与范围 / 时间窗口 / 操作人 / 前置路由和资源快照 / 路由隔离方案 / CIDR与vSwitch / NAT及EIP资源ID / RequestId及ClientToken摘要 / SNAT来源清单 / 各项目配置版本与镜像SHA / 外呼与私网验收证据 / 供应商白名单 / 告警通知测试 / 回滚演练 / 24小时观察 / 实账`。
 
-除已记录的路由表、新 vSwitch、ACS 选址护栏和数据库白名单外，NAT/EIP/SNAT、项目生效配置、短信旧通道状态及真实业务调用均为**待验证**，不能将本手册中的目标设计写成已上线事实。
+网络资源与双区数据面已按[实施记录](egress-nat-execution-2026-09-26.md)验证；项目生效配置、短信旧通道状态、真实 SDK 和业务调用仍为**待验证**，不能把网络验收写成项目上线验收。

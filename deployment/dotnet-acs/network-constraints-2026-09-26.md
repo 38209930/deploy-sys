@@ -1,8 +1,8 @@
 # ACS 共享 NAT：数据库与 OpenVPN 网段执行记录
 
-时间：2026-09-26。北京生产账号 `1442361567788059`，VPC `vpc-2zervez1jgscsglpenrzo`；MongoDB 所属账号 `1427133103874458`，对等 VPC `vpc-2zeiz7b6j78n4xvevr0lt`。阿里云配置通过显式 Profile 的 OpenAPI 完成；仅记录地址、资源 ID 和 RequestId，不记录访问凭据或数据库内容。
+时间：2026-09-26。**本文记录 NAT 创建前的数据库与 OpenVPN 准备快照；文中“未创建 NAT”等表述只适用于当时阶段。最终网络状态见[同日 NAT 实施记录](egress-nat-execution-2026-09-26.md)。** 北京生产账号 `1442361567788059`，VPC `vpc-2zervez1jgscsglpenrzo`；MongoDB 所属账号 `1427133103874458`，对等 VPC `vpc-2zeiz7b6j78n4xvevr0lt`。阿里云配置通过显式 Profile 的 OpenAPI 完成；仅记录地址、资源 ID 和 RequestId，不记录访问凭据或数据库内容。
 
-## 已完成：不改变旧业务路由的准备
+## 阶段一：不改变旧业务路由的准备（历史快照）
 
 | 对象 | 当前状态 | 创建 RequestId |
 |---|---|---|
@@ -35,8 +35,8 @@
 
 从新 k Pod `172.31.240.111` 和新 i Pod `172.28.64.182` 分别连接两个 MongoDB 私网节点，四次 TCP 建连成功；诊断 Pod 已全部删除，现有 10 个业务 Pod 仍运行，旧七个 vSwitch 仍在原系统表。未创建 NAT、EIP、SNAT。该结果解除**新网段 MongoDB 网络连通**阻断；项目生产发布仍须核对认证、配置、业务、任务和外部依赖。
 
-## OpenVPN 边界与后续顺序
+## OpenVPN 边界与当时拟定的后续顺序
 
 本机 OpenVPN 已提供访问**现有** `172.31.224.0/20`、`172.27.0.0/16` 和 MongoDB 私网节点的路由。目前本机到新 `172.31.240.0/24`、`172.28.64.0/24` 不经 VPN。此次云侧 Pod 出网和 Pod 到数据库不依赖本机直达新 Pod IP；因此 OpenVPN 服务端加路由不是创建隔离 vSwitch 或诊断 NAT 的前置条件。若未来确需本机直接连接新 Pod IP，届时另行核对 VPN 服务端推送、转发、VPC 回程和安全组；不能只改本机路由。
 
-后续按顺序：① 重读旧七个 vSwitch、三张路由表、ACS 选址与业务健康；② 逐个将旧 vSwitch 关联到不含默认路由的 `acs-legacy-private-route`，每次检查私网和入口；③ 确认系统表仅留下 NAT 专用 vSwitch 后，再创建 NAT/EIP 并验证自动路由、两新网段 SNAT；④ 逐项目按发布门槛迁移。任一步失败暂停，不用公网出口成功替代 MySQL、Redis、MongoDB、SmsCore 私网验收。
+当时按顺序计划：① 重读旧七个 vSwitch、三张路由表、ACS 选址与业务健康；② 逐个将旧 vSwitch 关联到不含默认路由的 `acs-legacy-private-route`，每次检查私网和入口；③ 确认系统表仅留下 NAT 专用 vSwitch 后，再创建 NAT/EIP 并验证自动路由、两新网段 SNAT；④ 逐项目按发布门槛迁移。前三步已经完成，实测见[同日 NAT 实施记录](egress-nat-execution-2026-09-26.md)；第四步仍待逐项目执行。公网出口成功不能替代 MySQL、Redis、MongoDB、SmsCore 私网及业务验收。

@@ -1,13 +1,13 @@
 # 北京 ACS 公共公网出口：生产网络变更单
 
-状态：**已创建两张自定义路由表和三个隔离新 vSwitch，配置 ACS 默认选址护栏；新网段 MongoDB 私网 TCP 连通已验证；NAT、EIP、SNAT 未创建，旧七个 vSwitch 未迁路由，业务 Pod 未迁移。** 核对日期：2026-09-26。MongoDB 路由、白名单及实测结果见[网段记录](network-constraints-2026-09-26.md)；项目业务配置和真实资金/短信测试另按项目门槛执行。
+状态：**B～D 网络阶段已执行：旧七个 vSwitch 路由隔离、跨可用区 NAT、固定 EIP、两个新 Pod vSwitch 的稳定 SNAT 与双区诊断均完成。业务 Pod 未迁移；E 项目接入与真实 SDK/资金/短信验收待执行。** 核对日期：2026-09-26。实际资源和 RequestId 见[网络实施记录](egress-nat-execution-2026-09-26.md)；MongoDB 路由、白名单及实测结果见[网段记录](network-constraints-2026-09-26.md)。
 
 ## 1. 已核实的现网事实
 
 - VPC `vpc-2zervez1jgscsglpenrzo`，北京，IPv4 `172.16.0.0/12`，未发现启用 IPv6。ACS `ruishi-prod-acs`：`cebc88343a44b4d759aa983a47b787835`。
-- 系统路由表 `vtb-2zebvv47akvfr0cq15njq` **关联下面全部七个旧 vSwitch**；仅有七条 VPC local、`100.64.0.0/10` 服务路由和 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen`，没有默认路由。未发现本 VPC 的公网 NAT。
-- 本次已创建 `acs-legacy-private-route`（`vtb-2ze9057j04btdfr3bofhy`）和 `acs-egress-route`（`vtb-2zedknif7nxu7z397b4o6`），各有相同的 local、服务与 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen` 路由，均无默认路由；出口表已关联两个新 Pod vSwitch，旧业务表仍无关联；旧七个 vSwitch 仍在系统表。
-- `kube-system/acs-profile` 的 `vSwitchIds` 保留旧 k/i 并追加新 k/i；兜底 selector 已实测无显式选址 Pod 落旧网段。现有 10 个运行中业务 Pod 仍在旧网段（含 M1X API/Worker、新零售三个角色、经销商 API），未迁移；两区临时诊断 Pod 已清理。
+- 变更前系统路由表 `vtb-2zebvv47akvfr0cq15njq` 关联七个旧 vSwitch、无默认路由。变更后它**只关联 NAT 专用 vSwitch**，并有自动生成的 `0.0.0.0/0 → ngw-2zetnd6golba2sju2q7jo`。
+- `acs-legacy-private-route`（`vtb-2ze9057j04btdfr3bofhy`）现关联全部七个旧 vSwitch，保留 local、服务与 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen`，没有默认路由。`acs-egress-route`（`vtb-2zedknif7nxu7z397b4o6`）仅关联两个新 Pod vSwitch，保留这些私网路由，并新增 `0.0.0.0/0 → 新 NAT`。
+- `kube-system/acs-profile` 的 `vSwitchIds` 保留旧 k/i 并追加新 k/i；兜底 selector 已实测无显式选址 Pod 落旧网段。现有 10 个运行中业务 Pod 仍在旧网段，重启数均为 0；两区临时诊断 Pod 已清理。
 - 旧 k 网段还有独立网站 ECS `172.31.238.203`，自带公网 IP；按阿里云出口优先级，它继续使用自身公网地址，不是新建 Pod 网段的必要条件，也不纳入项目迁移。旧 f 网段含 SmsCore ECS `172.27.182.18`，其短信供应商出口保持独立；供应商侧实际出口与白名单仍需单独核实。
 
 | 旧 vSwitch | 可用区 / CIDR | 已知来源 | 目标路由表 |
@@ -24,9 +24,9 @@
 |---|---|---|---|
 | `acs-egress-pods-k` `vsw-2zevd832gq3313j6gv5sj` | k / `172.31.240.0/24` | 经批准迁入的 ACS 业务 Pod | `acs-egress-route` |
 | `acs-egress-pods-i` `vsw-2zesy6off4gy39tqripzp` | i / `172.28.64.0/24` | 经批准迁入的 ACS 业务 Pod | `acs-egress-route` |
-| `acs-nat-k` `vsw-2zemuu9wf9pz0w83c7kpv` | k / `172.31.241.0/28` | NAT 专用；不加入 ACS `vSwitchIds` | 系统表 |
+| `acs-nat-k` `vsw-2zemuu9wf9pz0w83c7kpv` | k / `172.31.241.0/28` | NAT 专用；不加入 ACS `vSwitchIds` | 系统表；自动默认路由仅作用于此 vSwitch |
 
-三个网段已创建且与本 VPC 旧 vSwitch 不重叠。MySQL、Redis、SmsCore 已从新 Pod 双区实测私网 TCP；MongoDB 对端已新增两个精确回程路由及独立白名单组，新 k/i Pod 到两个私网节点的四次 TCP 建连均成功。见[实测记录](network-constraints-2026-09-26.md)。MongoDB 认证和业务读写仍须在项目启动时验收。本机 OpenVPN 到新 Pod 网段的路由不是云侧 Pod 私网访问的前提；未来如需本机直连再单独配置。新 Pod 网段的使用主体严格限于审批清单中的工作负载；Namespace 本身不构成网络隔离。
+三个网段与旧 vSwitch 不重叠。网络出口创建后，MySQL、Redis、SmsCore、MongoDB 双节点仍从新 k/i Pod 实测私网 TCP；两区公网回显均为 `39.96.67.239`，详见[网络实施记录](egress-nat-execution-2026-09-26.md)。MongoDB 认证和业务读写仍须在项目启动时验收。本机 OpenVPN 到新 Pod 网段的路由不是云侧 Pod 私网访问的前提；未来如需本机直连再单独配置。新 Pod 网段的使用主体严格限于审批清单中的工作负载；Namespace 本身不构成网络隔离。
 
 ## 2. 固定拓扑与不变量
 
@@ -42,6 +42,8 @@ NAT 专用 k     ── VPC 系统表（创建 NAT 后自动出现的 0.0.0.0/0�
 创建 NAT 会自动修改系统表，故必须先使七个旧 vSwitch 全部脱离系统表。自定义路由表会自动包含本地和服务路由，但**不会自动继承对等连接自定义路由**；必须手工复制 `10.0.0.0/24 → pcc-i6zwr0k50cr119ezen` 并只读对比。关联 API 是异步的，每个 vSwitch 完成后查询状态及真实私网/入站业务，再处理下一个。创建 NAT 后不得把旧 vSwitch 直接解绑回系统表，否则会落入带 NAT 默认路由的系统表。
 
 ## 3. 分阶段 API 操作及每步门槛
+
+**执行状态：**A～D 已于 2026-09-26 完成；以下 A～D 的操作顺序保留为本次变更记录和回滚依据，不可再次按“创建”步骤重放。下一阶段从 E 的逐项目发布门槛开始，实际结果见[实施记录](egress-nat-execution-2026-09-26.md)。
 
 ### A. 执行前冻结
 
