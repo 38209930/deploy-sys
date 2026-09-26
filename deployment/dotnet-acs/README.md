@@ -29,7 +29,7 @@
 - ALB 的目标 Host、证书和后端规则须在每个项目发布时重新核对；此前“全部 .NET 目标域名均返回 503”的预部署记录已不适用于现已运行的新零售和经销商查询。此前核验的通配符证书覆盖 `*.svision100.com`，有效期至 2027-02-28 23:59:59 UTC；正式发布仍须重新核对。
 - 2026-09-26 零副本预部署：已使用显式 `ruishi-prod-acr` Profile 核对生产账号并创建 13 个私有镜像仓库；ACS 私有 API 可达且当前身份具备创建 Namespace、Deployment、Service 的权限。`points-mall-front` 的 Codeup API 绑定返回 `SOURCE_ACCOUNT_NOT_AVAILABLE`，需完成代码源绑定后再配置构建。详见[预部署执行记录](zero-replica-predeploy-2026-09-26.md)。
 - 尚未完成：各项目代码会话的完整评审及运行验收；实际启用的外部调用/SDK/白名单清单；NAT 生产网络变更；Worker 及 API 内消费者的交接核对、业务验收。经销商合并 API 已通过私网连接原生产 MySQL、Redis，并以单副本接通 `4l-api.svision100.com`；图片真实上传、管理员登录与维护操作仍待业务验收，详见[发布记录](release-records.md)。
-- 出口复核：目标 VPC 的公网 NAT 网关为 0；七个旧 vSwitch 仍共用无默认路由的系统表。首次创建 NAT 会自动添加系统默认路由，影响全部关联 vSwitch 的路径。本次已创建两张私网/出口自定义表、三个隔离新 vSwitch，并配置 ACS 默认选址护栏。新网段到 MySQL、Redis、SmsCore 私网 TCP 已双区通过；MongoDB 因对端缺回程路由和白名单尚不通。OpenVPN 的本机直连新 Pod 路由不阻断云侧诊断。见[网段记录](network-constraints-2026-09-26.md)。旧 vSwitch 和业务 Pod 未迁移。
+- 出口复核：目标 VPC 的公网 NAT 网关为 0；七个旧 vSwitch 仍共用无默认路由的系统表。首次创建 NAT 会自动添加系统默认路由，影响全部关联 vSwitch 的路径。本次已创建两张私网/出口自定义表、三个隔离新 vSwitch，并配置 ACS 默认选址护栏。新网段到 MySQL、Redis、SmsCore 私网 TCP 已双区通过；MongoDB 对端已补齐两个回程路由及独立白名单，新 k/i Pod 至两个私网节点的 TCP 建连均通过，认证和业务读写待项目启动时验收。OpenVPN 的本机直连新 Pod 路由不阻断云侧诊断。见[网段记录](network-constraints-2026-09-26.md)。旧 vSwitch 和业务 Pod 未迁移。
 - 公共出口阶段仍**未采购 NAT/EIP**；经销商单体 API 已复用原生产 RDS、Redis、OSS 的私网路径并创建专用 Ingress。新零售及经销商的实际启动与入口状态以[发布记录](release-records.md)为准；未修改既有 Java 资源。
 
 发布不得以编译通过、Pod Ready、HTTP 401/404 代替真实业务验收。任何一项阻断未消除，保持旧系统运行并停在对应阶段。

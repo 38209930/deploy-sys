@@ -1,6 +1,6 @@
 # ACS 公共公网出口：执行手册与当前门槛
 
-状态：**已创建两张自定义路由表、三个隔离新 vSwitch，并完成 ACS 默认选址护栏及新网段私网诊断；NAT、EIP、SNAT 未创建，旧业务网络与 Pod 未迁移。MongoDB 新网段回程路由和白名单待处理。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。具体资源、拓扑、顺序与回滚以[生产网络变更单](egress-nat-change-order.md)及[网段核对执行记录](network-constraints-2026-09-26.md)为准。
+状态：**已创建两张自定义路由表、三个隔离新 vSwitch，并完成 ACS 默认选址护栏及新网段私网诊断；MongoDB 对端回程路由和白名单已补齐，双区至双节点 TCP 验证通过；NAT、EIP、SNAT 未创建，旧业务网络与 Pod 未迁移。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。具体资源、拓扑、顺序与回滚以[生产网络变更单](egress-nat-change-order.md)及[网段核对执行记录](network-constraints-2026-09-26.md)为准。
 
 ## 1. 固定架构与边界
 
@@ -48,9 +48,9 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 
 每个写 API 保存 RequestId、参数摘要、资源 ID、前后状态；接口支持时使用固定 ClientToken，结果不明先只读查询。完整逐步门槛见[生产网络变更单](egress-nat-change-order.md)。
 
-1. 完成[MongoDB 新网段连通门槛](network-constraints-2026-09-26.md)及实时报价、容量核验；重读三张表，逐个迁走七个旧 vSwitch，核实系统表不再服务旧业务资源。本机 OpenVPN 仅在需要直连新 Pod 时调整。
+1. [MongoDB 新网段 TCP 连通](network-constraints-2026-09-26.md)已验证；后续核实实时报价和容量，重读三张表，逐个迁走七个旧 vSwitch，核实系统表不再服务旧业务资源。本机 OpenVPN 仅在需要直连新 Pod 时调整。
 2. 两个业务 Pod 专用 vSwitch、一个 NAT 专用 vSwitch 已创建，Pod vSwitch 已关联出口表；隔离旧业务路由并确认后创建增强型公网 NAT，显式使用 `EipBindMode=NAT`，申请并绑定单一 EIP；仅出口表和 NAT 所在系统表有默认路由。
-3. ACS 旧 k/i 默认选址护栏及两个新业务 Pod vSwitch 已配置。MongoDB 私网复测通过后，新 k/i 诊断 Pod 各使用 `/32` 临时 SNAT 验证固定 EIP；随后仅对两个**新** vSwitch 建稳定 SNAT 并清理诊断条目。
+3. ACS 旧 k/i 默认选址护栏及两个新业务 Pod vSwitch 已配置，MongoDB 私网 TCP 复测已通过。后续新 k/i 诊断 Pod 各使用 `/32` 临时 SNAT 验证固定 EIP；随后仅对两个**新** vSwitch 建稳定 SNAT 并清理诊断条目。
 4. 按 DGYE → VET → STOPMP → ETBST → DDMP → Yangu → M1X 逐项把已通过业务门槛的 Deployment 显式迁入新 vSwitch。每次验收真实 SDK外呼、私网、ALB、SmsCore 和任务状态；M1X 双角色分别核对。全部观察至少 24 小时并覆盖关键任务周期。
 5. .NET 按 AI → 售后工单 → 积分商城 → 新零售 → 经销商顺序迁移，各项目代码交付、配置、Worker/消费者交接及业务验收另按[发布手册](runbook.md)执行。
 
