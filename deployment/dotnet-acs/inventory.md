@@ -12,6 +12,18 @@
 
 合计 13 个 Deployment，9 CPU / 18 GiB。Namespace、仓库名是本轮建议命名，**尚未创建**；如与现有组织约定冲突，必须在资源创建前一次性修订本表。AI 的旧 FrontApi、经销商同 ECS 上的以旧换新不能因为本轮操作被停止。
 
+2026-09-26 DNS 只读查询：新零售、AI、经销商的目标 Host 当前解析到旧 ALB IP `39.105.188.147`；积分商城、售后工单解析到旧 ALB IP `101.201.60.62`。各项目的前后端同 IP。正式变更前仍要核对权威 DNS、TTL 与是否存在并行解析记录。
+
+统一在拟建 ACR 命名空间 `ruishi-dotnet-prod` 下使用以下仓库名。Kubernetes Deployment、API Service 采用同名；ServiceAccount 采用项目 Namespace 名。完整镜像地址和 digest 以 ACR 实际创建与构建结果为准。
+
+| 项目 | FrontApi | BackApi | Worker |
+|---|---|---|---|
+| 新零售 | `new-retail-front` | `new-retail-back` | `new-retail-worker` |
+| 积分商城 | `points-mall-front` | `points-mall-back` | `points-mall-worker` |
+| 售后工单 | `service-order-front` | `service-order-back` | `service-order-worker` |
+| AI 自习室 | — | `ai-study-back` | `ai-study-worker` |
+| 经销商查询 | `agent-query-front` | `agent-query-back` | — |
+
 ## 每项目必须填满的发布记录
 
 在本文件或独立的项目发布记录中逐项填写非秘密值，证据位置记录为工单/受控路径，不复制配置内容：
