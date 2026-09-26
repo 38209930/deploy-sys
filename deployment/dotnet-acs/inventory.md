@@ -8,9 +8,9 @@
 | 积分商城 / `points-mall` | `i-2ze3w6i78cobsmmfo2y9` | `rsjf-front-api.svision100.com` / 1 CPU 2 GiB | `rsjf-back-api.svision100.com` / 0.5 CPU 1 GiB | 0.5 CPU 1 GiB | `origin/release` `43afaf4`；最终 SHA 待冻结 |
 | 售后工单 / `service-order` | `i-2ze710cj1qpe7s7zv5sq` | `rsod-front-api.svision100.com` / 1 CPU 2 GiB | `rsod-back-api.svision100.com` / 0.5 CPU 1 GiB | 1 CPU 2 GiB | 本地 `master` `5cd022d`；领先远端 28 提交，最终 SHA 待冻结 |
 | AI 自习室 / `ai-study` | `i-2ze2s8pzq0kvqu28iml8` | **不迁移**，FrontApi 保留 ECS | `rsst-back-api.svision100.com` / 1 CPU 2 GiB | 0.5 CPU 1 GiB | `master` `97ff88e` 加待评审本机业务改动；最终 SHA 待冻结 |
-| 经销商查询 / `agent-query` | `i-2ze6v19gpeg6t864exra` | `rsqapi-ft.svision100.com` / 0.5 CPU 1 GiB | `rsqapi-bk.svision100.com` / 0.5 CPU 1 GiB | **无** | Apollo 功能分支 `6d93ae3`；接口/数据适配后冻结 |
+| 经销商查询 / `agent-query` | `i-2ze6v19gpeg6t864exra` | **前后台同一个** `agent-query-api`，`4l-api.svision100.com` / 0.5 CPU 1 GiB | 同左，不单独部署 | **无** | 合并宿主 `release` `5fc6913`；OSS 已适配，生产依赖待验收 |
 
-合计 13 个 Deployment，9 CPU / 18 GiB。Namespace、仓库名是本轮建议命名，**尚未创建**；如与现有组织约定冲突，必须在资源创建前一次性修订本表。AI 的旧 FrontApi、经销商同 ECS 上的以旧换新不能因为本轮操作被停止。
+按现有范围合计 12 个 Deployment，8.5 CPU / 17 GiB。部分 Namespace、仓库和 Deployment 已创建，实际状态以[发布记录](release-records.md)为准。AI 的旧 FrontApi、经销商同 ECS 上的以旧换新不能因为本轮操作被停止。
 
 2026-09-26 DNS 只读查询：新零售、AI、经销商的目标 Host 当前解析到旧 ALB IP `39.105.188.147`；积分商城、售后工单解析到旧 ALB IP `101.201.60.62`。各项目的前后端同 IP。直接向权威服务器 `vip1.alidns.com` 查询，九个 Host 均为单条 A 记录、TTL **600 秒**。切换前再次查权威记录；旧 API 至少覆盖 TTL 和在途请求窗口，实际客户端缓存可能更长，不能只按 600 秒保证全部旧流量消失。
 
@@ -24,7 +24,7 @@
 | 积分商城 | `points-mall-front` | `points-mall-back` | `points-mall-worker` |
 | 售后工单 | `service-order-front` | `service-order-back` | `service-order-worker` |
 | AI 自习室 | — | `ai-study-back` | `ai-study-worker` |
-| 经销商查询 | `agent-query-front` | `agent-query-back` | — |
+| 经销商查询 | `agent-query-api`（同时承载前后台） | 同左，无第二仓库 | — |
 
 ## 每项目必须填满的发布记录
 
@@ -38,7 +38,7 @@
 | 外部依赖 | 实际启用的目的域名/端口、调用 SDK 真实请求与供应商侧来源 EIP、非 HTTP 处理、超时/重试/幂等、回调地址、旧新出口 IP 双白名单及核对证据：待验证；按[NAT 出口手册](egress-nat.md)登记 |
 | 旧服务 | systemd/容器实例及自启方式、Worker 停机命令、在途任务与锁、API 保留时间、回滚启动命令：待验证 |
 | 网络 | 私网数据库/Redis/Mongo/SmsCore 连通性、NAT 路由和来源边界、供应商侧来源 EIP、无 DNAT 入站、ALB 证书与 Host 路由、DNS TTL：待验证 |
-| 数据 | 旧新版本并行兼容、生产结构版本、连接池总数；经销商独立库迁移记录：待验证 |
+| 数据 | 旧新版本并行兼容、生产结构版本、连接池总数；经销商沿用原生产库的可达性和结构：待验证 |
 | 上线 | 维护窗口、授权记录、API 业务验收、Worker 首次任务、24 小时观察起止、切换及回滚决策：待验证 |
 
 ## 资源隔离与默认规格

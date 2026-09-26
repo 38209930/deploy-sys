@@ -40,11 +40,11 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 
 ## 经销商查询（第五项）
 
-- 目标：`agent-query` Namespace；`agent-query-front`、`agent-query-back` 各 0.5 CPU/1 GiB；**无 Worker**；旧 ECS `i-2ze6v19gpeg6t864exra` 上的以旧换新不受影响。
-- Host：`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com`。旧 DNS 为 `39.105.188.147`；新 ALB 证书握手已验证，Host 规则尚无。
-- 源码：Apollo `/Volumes/SSD/work/mall/apollo/prod/api.netcore-net10`，当前功能分支基础 `6d93ae3`；最终 release SHA、两个 digest、独立库/Redis 前缀、Secret/结构版本：待验证。
-- 切换关键点：旧门店接口和 Apollo 当前 `MiniappStore` 使用的表及业务字段不同，必须由代码会话完成独立宿主、契约/权限适配、迁移映射与测试；独立演练库数量/状态/坐标/图片/标签/权限一致，旧后台写入冻结及最终导入计划：待验证。
-- 生产数据写入授权、增量数据回滚方案、24 小时观察及回滚证据：待验证。
+- 目标：`agent-query` Namespace 中**一个** `agent-query-api` Deployment（0.5 CPU/1 GiB）、一个 ClusterIP Service，同时承载前台与后台接口；**无 Worker**。旧 ECS `i-2ze6v19gpeg6t864exra` 上的以旧换新不受影响。
+- 正式 Host：`4l-api.svision100.com` 已指向新 ALB；尚未创建该 Host 的 Ingress，未接入正式流量。旧 `rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 是历史入口，不作为本次两个新服务部署。
+- 源码：`/Volumes/SSD/work/mall/经销商查询/agent_query_api_net10`，`release` SHA `5fc6913727c7ab084424bb601f13ee7e5b4acd16`；合并宿主图片上传使用原有 OSS。ACR `agent-query-api` 构建成功，镜像 digest `sha256:064dc0aa46145cf44e907c5567f3bb607139fb17c7063c083e11aa4e0b111ea5`。
+- ACS 已创建单体 Deployment 和 Service，Deployment 固定上述 digest，期望副本 **0**。先前试运行的旧镜像未通过 `/health/ready`：当前生产 MySQL 与 Redis 主机解析到公网 IP，Pod TCP 连接超时。试运行实例已停止；没有创建 Ingress。运行 Secret 已有数据库、Redis 等配置，但尚缺新宿主所需的 OSS 写入凭据；需受控补齐并验证。
+- 上线门槛：MySQL、Redis 从 ACS 可达；OSS 配置安全下发且上传、读取验证；单体 API 的前后台登录、门店查询和维护验收；然后才扩到 1 并接入 `4l-api.svision100.com`。公网 NAT 由独立任务处理，本次不擅自创建。生产写入、回滚及 24 小时观察证据：待验证。
 
 ## 每项完成时补录
 

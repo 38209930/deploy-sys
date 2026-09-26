@@ -4,7 +4,7 @@
 
 ## 范围
 
-本轮迁移新零售、积分商城、售后工单、AI 自习室和经销商查询，共 9 个 API、4 个 Worker。AI FrontApi、以旧换新和 SmsCore 留在原 ECS。单角色一个副本，API 使用 `Recreate`，Worker 还须通过旧服务退出确认和业务幂等保障唯一执行。项目顺序固定为：AI 自习室 → 售后工单 → 积分商城 → 新零售 → 经销商查询；每项至少观察 24 小时并覆盖关键任务周期。
+本轮迁移新零售、积分商城、售后工单、AI 自习室和经销商查询，共 8 个 API Deployment、4 个 Worker；经销商的前后台接口由同一个 `agent-query-api` 承载。AI FrontApi、以旧换新和 SmsCore 留在原 ECS。单角色一个副本，API 使用 `Recreate`，Worker 还须通过旧服务退出确认和业务幂等保障唯一执行。每项上线后至少观察 24 小时并覆盖关键任务周期；实际发布顺序以逐项目授权和依赖就绪情况确定。
 
 具体资源与域名见 [资源清单](inventory.md)，逐项目外呼见 [公共出口核对表](external-dependencies.md)，.NET 阻断项见 [五项目发布记录](release-records.md)，公共公网出口见 [NAT 执行手册](egress-nat.md)，生产路由与来源隔离见 [网络变更单](egress-nat-change-order.md)，操作顺序见 [发布手册](runbook.md)，故障与费用见 [运维备忘录](operations.md)。这些文件不包含凭据、配置值和客户数据。
 
@@ -28,7 +28,7 @@
 - 已完成：五项目范围、初始规格、旧域名和实例盘点；同仓库的新零售/积分商城基线差异已识别；五项目代码适配已交给各自独立会话。AI 自习室、积分商城、新零售、售后工单的适配分支已交付且目标 Release 构建或 publish 通过，镜像运行与生产业务尚未验收。
 - 新 ALB 当前 443 监听只有七个现存 Java Host 规则；用指定 Host/SNI 请求本轮全部九个目标域名，证书校验均通过但均返回 503，符合尚无 .NET 转发规则的现状。当前通配符证书覆盖 `*.svision100.com`，有效期至 2027-02-28 23:59:59 UTC；正式发布时仍须重新核对证书与规则。
 - 2026-09-26 零副本预部署：已使用显式 `ruishi-prod-acr` Profile 核对生产账号并创建 13 个私有镜像仓库；ACS 私有 API 可达且当前身份具备创建 Namespace、Deployment、Service 的权限。`points-mall-front` 的 Codeup API 绑定返回 `SOURCE_ACCOUNT_NOT_AVAILABLE`，需完成代码源绑定后再配置构建。详见[预部署执行记录](zero-replica-predeploy-2026-09-26.md)。
-- 尚未完成：各代码会话的完整评审、镜像运行与 `release` SHA 冻结；实际启用的外部调用/SDK/白名单清单；NAT 生产网络变更授权和付费采购；镜像 digest、生产配置 Secret、Worker 及 API 内消费者的交接核对、业务验收；经销商旧门店表到独立新宿主的数据迁移。
+- 尚未完成：各项目代码会话的完整评审及运行验收；实际启用的外部调用/SDK/白名单清单；NAT 生产网络变更；Worker 及 API 内消费者的交接核对、业务验收。经销商合并 API 已构建并准备零副本资源，沿用原生产库；其 MySQL、Redis 从 ACS 的连通性和 OSS 运行凭据仍待解决，详见[发布记录](release-records.md)。
 - 出口复核：目标 VPC 的公网 NAT 网关为 0；七个 vSwitch 共用一张无默认路由的系统表。首次创建 NAT 会自动添加默认路由，影响全部关联 vSwitch 的路径。网站 ECS 与 ACS Pod 同处旧 k vSwitch，但有自己的公网 IP，不是必须新建 Pod 网段的理由，也不纳入本次迁移。现有网段可复用；本版[生产网络变更单](egress-nat-change-order.md)选择新建业务 Pod 网段，以便将目标 Pod 的整段 SNAT 与 ACS 系统 Pod 等其他私网来源隔离。生产网络变更已暂缓。
 - 因上述缺口，本轮**尚未采购 NAT/EIP，未创建 .NET ACS Namespace/Ingress，未启动任何新 Pod，未停旧服务，未修改 DNS 或既有 Java 资源**。
 
