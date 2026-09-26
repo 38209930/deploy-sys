@@ -14,8 +14,8 @@
 
 - 目标：`service-order` Namespace；`service-order-front` 1 CPU/2 GiB、`service-order-back` 0.5 CPU/1 GiB、`service-order-worker` 1 CPU/2 GiB；旧 ECS `i-2ze710cj1qpe7s7zv5sq`。
 - Host：`rsod-front-api.svision100.com`、`rsod-back-api.svision100.com`。旧 DNS 为 `101.201.60.62`；新 ALB 证书握手已验证，Host 规则尚无。
-- 源码：`/Volumes/SSD/work/mall/售后工单系统/service-order-api`；本地 `master` 基础 `5cd022d`，相对远端领先 28 提交；最终 release SHA、三个 digest、Secret/结构版本：待验证。
-- 切换关键点：工单创建/流转、ERP 同步、发货与退款状态、聚水潭 token、任务游标和 Redis 锁、短信业务事件幂等；旧 Worker 首次停机和队列核验：待验证。
+- 源码：`/Volumes/SSD/work/mall/售后工单系统/service-order-api`；ACS 适配分支 `deploy/dotnet-acs-service-order` 已推送 `fb36c8a`，交接说明在 `Doc/release/ACS容器部署适配说明.md`。三个 Linux x64 Release publish 通过；Docker 基础镜像下载未完成，容器运行未验收。远端尚无 `release` 分支，最终发布基线、三个 digest、Secret/结构版本：待验证。
+- 切换关键点：工单创建/流转、ERP 同步、发货与退款状态、聚水潭 token、任务游标和 Redis 锁、短信业务事件幂等；旧 Worker 首次停机和队列核验：待验证。Front/Admin 当前 Kestrel 端口为 **3080/3081**，与本轮统一容器端口 8080 不同；若沿用 8080，应显式覆盖 `Kestrel__EndPoints__Http__Url` 并实测探针与 Service，不能只设置 `ASPNETCORE_URLS`。Worker 无 HTTP；Redis 任务锁为固定 TTL，不能单靠锁保证跨副本独占。短信及 ERP 幂等所需唯一索引须只读核对。构建产物包含被代码会话标为非敏感的 `appsettings.Production.json`，发布前仍需检查镜像没有真实生产连接与密钥，敏感值全部由外部注入。
 - 生产授权、外呼白名单、真实业务回调、24 小时观察及回滚证据：待验证。
 
 ## 积分商城（第三项）
@@ -30,8 +30,8 @@
 
 - 目标：`new-retail` Namespace；`new-retail-front` 1 CPU/2 GiB、`new-retail-back` 0.5 CPU/1 GiB、`new-retail-worker` 0.5 CPU/1 GiB；旧 ECS `i-2ze68mprzc2jzea57xfz`。
 - Host：`rs-store-api-front.svision100.com`、`rs-store-api-back.svision100.com`。旧 DNS 为 `39.105.188.147`；新 ALB 证书握手已验证，Host 规则尚无。
-- 源码：`/Volumes/SSD/work/mall/新零售/newsale-api`；业务基线 `product/new-retail` `07f06c0`，不可误用同远端积分商城的 `release`；最终生产 SHA、三个 digest、Secret/结构版本：待验证。
-- 切换关键点：登录、下单、支付与回调、优惠券、订单状态推进、短信事件；支付超时状态不明时先查单再补偿：待验证。
+- 源码：`/Volumes/SSD/work/mall/新零售/newsale-api`；ACS 适配分支 `deploy/dotnet-acs-new-retail` 已推送 `1914b60`，业务基线为 `product/new-retail`，不可误用同远端积分商城的 `release`。三个 Release 编译、相关单测 10/10 通过；Docker 镜像构建未取得完整结果，容器运行未验收。最终生产 SHA、三个 digest、Secret/结构版本：待验证。
+- 切换关键点：登录、下单、支付与回调、优惠券、订单状态推进、短信事件；支付超时状态不明时先查单再补偿：待验证。API/Admin 为容器内 HTTP 8080，具 `/health/live` 与 `/health/ready`；Worker 无 HTTP，Quartz 作业单实例内防重叠，退出最长等待 120 秒。**尚无新 Worker 禁用调度的交付参数**，不得在旧 Worker 退出前以一副本预启动。目标生产库的兼容结构仍需就绪探针实测，第三方 SDK 经代理的行为仍需逐项验证。
 - 生产授权、外呼白名单、旧 Worker 交接、24 小时观察及回滚证据：待验证。
 
 ## 经销商查询（第五项）

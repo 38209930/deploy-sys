@@ -1,6 +1,6 @@
 # .NET ACS 标准发布手册
 
-适用范围：北京 `ruishi-prod-acs` 本轮五项目。本文规定顺序与停止条件。实际创建资源时使用经代码会话验证的镜像、端口、环境变量和配置版本；任何变量尚未查实就停在该步。每项目各留一份填写完整的[发布记录](inventory.md)。
+适用范围：北京 `ruishi-prod-acs` 本轮五项目。本文规定顺序与停止条件。实际创建资源时使用经代码会话验证的镜像、端口、环境变量和配置版本；任何变量尚未查实就停在该步。每项目各留一份填写完整的[发布记录](release-records.md)。
 
 ## 0. 发布前冻结
 
@@ -25,7 +25,7 @@
 1. 创建项目 Namespace、ServiceAccount 与 ResourceQuota。只在 ACR 凭据助手的 `watchNamespace` 和 `serviceAccount` 追加该项目同名条目，保留旧列表；拉取权限验收后复查既有项目。
 2. 建立每角色单独的 ACR 仓库和 `release` 固定 SHA 构建规则。构建失败时先排查公网依赖和 Dockerfile，不修改生产服务。镜像引用使用 digest。需核对仓库存储量、构建并发与产生费用。
 3. 在获得具体授权后，通过受控通道下发**项目专用**生产 Secret；只记录名称、键、版本/摘要，不打印值。确认私网数据库/Redis/Mongo、SmsCore `172.27.182.18:3090`、代理及 `NO_PROXY` 值的语义；不要假定 SDK 都支持 CIDR 格式。变更 Secret 后显式滚动目标 Deployment。
-4. 生成 Front/Admin/Worker Deployment，均以 `replicas: 0` 创建；`strategy.type: Recreate`、`requests=limits`、无 HPA。API 监听 `8080`（经代码会话最终验证），ClusterIP Service 指向对应 API。Worker 不创建 Service/Ingress。
+4. 生成 Front/Admin/Worker Deployment，均以 `replicas: 0` 创建；`strategy.type: Recreate`、`requests=limits`、无 HPA。API 目标为容器 HTTP `8080`，逐项目实测监听与 Service `targetPort` 一致；售后工单当前 Kestrel 配置为 Front `3080`、Admin `3081`，若沿用 8080，需显式覆盖 `Kestrel__EndPoints__Http__Url` 并验证，单设 `ASPNETCORE_URLS` 不足以证明已覆盖。Worker 不创建 Service/Ingress。
 5. API 探针：`/health/live` 只判进程；`/health/ready` 检查必要数据库、Redis 和所需结构。startup 5 秒×60、liveness 10 秒×3、readiness 5 秒×3，超时均 2 秒；如果实测启动时间不同，先更新清单与维护窗口。Worker 使用启动预检、心跳和任务结果，不配置伪 HTTP 探针。
 6. `ASPNETCORE_ENVIRONMENT` 和 `DOTNET_ENVIRONMENT` 均为 `Production`；HTTP 绑定 `0.0.0.0:8080`；不以仓库默认配置覆盖 Secret。可信代理范围按 ALB **当前** Local IP 精确配置，`ForwardLimit=1`，实际经 ALB 请求核对 scheme、来源 IP、Cookie Secure、重定向和 CORS。
 7. 在新 ALB 上由 Ingress Controller 创建精确 Host 规则。Ingress 使用 `ingressClassName: alb`，443 对应已核实证书，不改既有 Host 和监听器 ACL。此时 DNS 仍指旧 ALB。以指定 Host/SNI 请求新 ALB 做无流量切换的验收，证书校验必须通过；不要用 `curl -k` 掩盖证书问题。
