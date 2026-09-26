@@ -6,7 +6,7 @@
 
 本轮范围是新零售、积分商城、售后工单、AI 自习室和经销商查询，设计共 8 个 API Deployment、4 个 Worker；经销商的前后台接口由同一个 `agent-query-api` 承载。AI FrontApi、积分商城 FrontApi、以旧换新和 SmsCore 仍留原 ECS。当前 ACS 实际创建 **7 个 API、4 个 Worker**，其中积分 Front 未创建、售后 Worker 为零副本；细节以交接快照为准。Worker 的唯一执行还须靠旧服务退出确认和业务幂等，不能只靠单副本。每项发布后至少观察 24 小时并覆盖关键任务周期，尚未取得完整观察证据。
 
-接手先看 [交接快照](HANDOVER-2026-09-26.md) 和 [阿里云 API 使用说明](aliyun-api-operations.md)。逐项目版本与验收见 [发布记录](release-records.md)，外呼见 [公共出口核对表](external-dependencies.md)，网络实操与证据见 [NAT 执行手册](egress-nat.md)、[实施记录](egress-nat-execution-2026-09-26.md)，发布与故障见 [发布手册](runbook.md)、[运维备忘录](operations.md)。[资源清单](inventory.md)保留早期规划参数，不能代替当前读回。这些文件不包含凭据、配置值和客户数据。
+接手先看 [交接快照](HANDOVER-2026-09-26.md) 和 [阿里云 API 使用说明](aliyun-api-operations.md)。日常运维执行入口见[运维值班手册](ops-playbook-2026-09-27.md)（每日/每周/每月巡检、变更 SOP、故障速查、遗留项清单）。逐项目版本与验收见 [发布记录](release-records.md)，外呼见 [公共出口核对表](external-dependencies.md)，网络实操与证据见 [NAT 执行手册](egress-nat.md)、[实施记录](egress-nat-execution-2026-09-26.md)，发布与故障见 [发布手册](runbook.md)、[运维备忘录](operations.md)。[资源清单](inventory.md)保留早期规划参数，不能代替当前读回。这些文件不包含凭据、配置值和客户数据。
 
 ## 已查实的共享环境
 
