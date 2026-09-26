@@ -2,6 +2,17 @@
 
 适用范围：北京 `ruishi-prod-acs` 本轮五项目。本文规定顺序与停止条件。实际创建资源时使用经代码会话验证的镜像、端口、环境变量和配置版本；任何变量尚未查实就停在该步。每项目各留一份填写完整的[发布记录](release-records.md)。
 
+## 当前阶段：API 零副本预部署
+
+本阶段独立于下文的生产启动与切换。ACR 的 `ruishi-dotnet-prod` 是镜像命名空间；ACS 按项目使用 `ai-study`、`service-order`、`points-mall`、`new-retail`、`agent-query`。执行记录见[2026-09-26 预部署记录](zero-replica-predeploy-2026-09-26.md)。
+
+1. 每次阿里云 API 调用显式指定 `ruishi-prod-acr` Profile 和北京地域，先以 STS 核对账号 `1442361567788059`；同时检查 CLI 退出码及响应业务码。当前默认 Profile 属于其他账号。只有指定 Profile 的凭据实际失效时才提示用户重新登录；RAM/RBAC 拒绝单独报告。
+2. 通过 ACR API 查询、创建私有仓库，绑定 Codeup，按每角色已交付的独立 Dockerfile 和冻结源码引用创建规则。`CreateRepoSourceCodeRepo` 返回 `SOURCE_ACCOUNT_NOT_AVAILABLE` 时停止该代码源绑定并核对实例级 Codeup 账号状态，不重复盲试。构建一次只启动一个任务，读回源码 SHA、构建结果及镜像 digest。
+3. 通过 ACS/ACK OpenAPI 取得短时私网集群访问配置，再经 Kubernetes API 进行服务端校验、创建对应 Namespace、ServiceAccount、零副本 Deployment 和 API ClusterIP Service。临时配置不得进入聊天、日志或 Git；本阶段不创建资源配额、生产 Secret、Ingress、HPA 或 CronJob，不追加 ACR 凭据助手范围。
+4. 没有合格镜像 digest 的角色不创建 Deployment。读回确认所有新 Deployment 的期望及实际 Pod 数均为零，且现有 Java 工作负载无配置或副本变更。项目阻断项交独立代码会话完成。
+
+下文第 1 节起属于后续公网出口、生产启动与切换阶段；不因零副本资源准备完成而自动执行。
+
 ## 0. 发布前冻结
 
 1. 刷新每个目标仓库远端引用，复核提交祖先关系；整理本机未提交业务修改，排除生成文件、个人配置和客户数据。新零售与积分商城虽然共用 Codeup 远端，但业务分支不同，必须分别冻结 SHA。代码会话完成评审、Release 构建、必要测试后再确认 `release` 基线。

@@ -2,6 +2,10 @@
 
 状态：预填的部署记录，所有「待验证」均为切换阻断项。只填资源 ID、版本和证据位置，不填配置值、密钥、手机号或客户数据。每项目分别记录实际授权、维护窗口、切换时间、24 小时观察起止和回滚决定。
 
+## 2026-09-26 零副本预部署状态
+
+ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建；[资源 ID 和 RequestId 见执行记录](zero-replica-predeploy-2026-09-26.md)。镜像构建、digest、ACS 项目 Namespace、Deployment 和 Service 均未完成；所有新角色实际 Pod 数为零。Codeup 绑定 API 对 `points-mall-front` 返回 `SOURCE_ACCOUNT_NOT_AVAILABLE`，其余仓库未重复尝试同一失败条件。项目源码与构建门槛继续以各节记录为准。
+
 ## AI 自习室（第一项）
 
 - 目标：`ai-study` Namespace；`ai-study-back` 1 CPU/2 GiB、`ai-study-worker` 0.5 CPU/1 GiB；FrontApi 留旧 ECS `i-2ze2s8pzq0kvqu28iml8`。
