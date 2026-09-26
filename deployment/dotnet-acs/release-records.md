@@ -12,9 +12,9 @@
 | 售后工单 Back | `rsod-back-api.svision100.com` | `service-order/service-order-back-alb` → `service-order-back:8080` | 1/1 Ready |
 | AI 自习室 Back | `rsst-back-api.svision100.com` | `ai-study/ai-study-back-alb` → `ai-study-back:8080` | 1/1 Ready |
 | 积分商城 Back | `rsjf-back-api.svision100.com` | `points-mall/points-mall-back-alb` → `points-mall-back:8080` | 1/1 Ready |
-| 经销商查询前后台 | `4l-api.svision100.com` | `agent-query/agent-query-api-alb` → `agent-query-api:8080` | 1/1 Ready |
+| 经销商查询前后台 | `4l-api.svision100.com`、`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` | `agent-query/agent-query-api-alb` → `agent-query-api:8080` | 1/1 Ready |
 
-售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。经销商是单体 API，旧 `rsqapi-ft`、`rsqapi-bk` 不是本次入口。部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
+售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。经销商是单体 API，三个域名都指向同一个 Service；`rsqapi-ft`、`rsqapi-bk` 于本轮追加，公网 HTTPS `/health/ready` 均返回 200，`POST /api/config/city_list` 返回 200，未认证的 `POST /back/store/pages` 返回 401。部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
 
 ## 2026-09-26 零副本预部署状态（历史快照，已被后续发布替代）
 
@@ -55,7 +55,7 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 ## 经销商查询（第五项）
 
 - 目标：`agent-query` Namespace 中**一个** `agent-query-api` Deployment（0.5 CPU/1 GiB）、一个 ClusterIP Service，同时承载前台与后台接口；**无 Worker**。旧 ECS `i-2ze6v19gpeg6t864exra` 上的以旧换新不受影响。
-- 正式 Host：`4l-api.svision100.com` 已指向新 ALB，并由 `agent-query-api-alb` Ingress 接入单体 API。旧 `rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 是历史入口，不作为本次两个新服务部署。
+- 正式 Host：`4l-api.svision100.com`、`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 均指向新 ALB，并由 `agent-query-api-alb` Ingress 接入同一个单体 API；三个域名不需要分别创建 Deployment。
 - 源码：`/Volumes/SSD/work/mall/经销商查询/agent_query_api_net10`，`release` SHA `5fc6913727c7ab084424bb601f13ee7e5b4acd16`；合并宿主图片上传使用原有 OSS。ACR `agent-query-api` 构建成功，镜像 digest `sha256:064dc0aa46145cf44e907c5567f3bb607139fb17c7063c083e11aa4e0b111ea5`。
 - 2026-09-26 已通过阿里云 `DescribeDBInstanceNetInfo` 核实原生产 RDS、Redis 各自的私网和公网地址属于**同一实例**，私网地址均在 ACS 所在 VPC。仅将经销商专用运行配置中的这两个主机名改为私网地址，保留原库名、账号及其他配置，创建 Secret `agent-query-api-runtime-config-v3`。RDS 查询 RequestId `01A0DD26-02C2-5995-B064-2A1A0560129C`，Redis 查询 RequestId `01A0DD26-4708-526F-9168-E9CB845088BF`。旧 v2 Secret 保留作回退。
 - 已将单体 Deployment 扩为 **1/1 Ready**，固定上述镜像 digest，Pod 无重启，`/health/live` 与包含 MySQL、Redis 检查的 `/health/ready` 均为 200。创建精确 Host 的 `agent-query-api-alb` Ingress（UID `8e745050-15fd-4dbb-87bf-d225384f7b69`），HTTPS 443 → ClusterIP Service `agent-query-api:8080`；正式域名 `4l-api.svision100.com` 已返回 200，TLS 校验通过。
