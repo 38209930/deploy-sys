@@ -1,6 +1,6 @@
 # 资源与项目发布清单
 
-状态：2026-09-26 只读盘点。`待验证` 不是默认值；填满并复核后才能进行该项目切换。域名为旧 ALB 上已发现的 Host，尚未验证业务所有回调地址和证书覆盖。
+状态：2026-09-26 规划清单与早期只读盘点。实际当前副本、Ingress、镜像 digest 和已经做过的入口检查以[当前交接快照](HANDOVER-2026-09-26.md)及[发布记录](release-records.md)为准；`待验证` 不是默认值，填满并复核后才能进行新的项目切换。本文保留早期目标域名和规格，不能覆盖后续实际 Host 调整。
 
 | 项目 / Namespace 建议名 | 旧 ECS | FrontApi 域名 / 规格 | BackApi 域名 / 规格 | Worker 规格 | 当前代码基线 |
 |---|---|---|---|---|---|
@@ -10,7 +10,7 @@
 | AI 自习室 / `ai-study` | `i-2ze2s8pzq0kvqu28iml8` | **不迁移**，FrontApi 保留 ECS | `rsst-back-api.svision100.com` / 1 CPU 2 GiB | 0.5 CPU 1 GiB | `master` `97ff88e` 加待评审本机业务改动；最终 SHA 待冻结 |
 | 经销商查询 / `agent-query` | `i-2ze6v19gpeg6t864exra` | **前后台同一个** `agent-query-api`，`4l-api.svision100.com` / 0.5 CPU 1 GiB | 同左，不单独部署 | **无** | 合并宿主 `release` `5fc6913`；OSS 已适配，生产依赖待验收 |
 
-按现有范围合计 12 个 Deployment，8.5 CPU / 17 GiB。部分 Namespace、仓库和 Deployment 已创建，实际状态以[发布记录](release-records.md)为准。AI 的旧 FrontApi、经销商同 ECS 上的以旧换新不能因为本轮操作被停止。
+按早期目标范围合计 12 个 Deployment，8.5 CPU / 17 GiB。实际当前 .NET 运行状态已发生变化，包含 7 个运行中的 API Deployment 和 4 个 Worker Deployment（其中售后 Worker 为零副本）；实际状态以[发布记录](release-records.md)为准。AI 的旧 FrontApi、经销商同 ECS 上的以旧换新不能因为本轮操作被停止。
 
 2026-09-26 DNS 只读查询：新零售、AI、经销商的目标 Host 当前解析到旧 ALB IP `39.105.188.147`；积分商城、售后工单解析到旧 ALB IP `101.201.60.62`。各项目的前后端同 IP。直接向权威服务器 `vip1.alidns.com` 查询，九个 Host 均为单条 A 记录、TTL **600 秒**。切换前再次查权威记录；旧 API 至少覆盖 TTL 和在途请求窗口，实际客户端缓存可能更长，不能只按 600 秒保证全部旧流量消失。
 

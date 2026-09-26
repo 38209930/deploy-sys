@@ -1,6 +1,6 @@
 # 北京 ACS 公共出口：2026-09-26 网络实施记录
 
-状态：**网络基础设施与新 Pod 网段的固定公网出口已完成并验证；业务 Pod 尚未迁入，项目 SDK、供应商白名单和资金/短信业务验收未完成。** 操作均显式使用阿里云 CLI Profile `ruishi-prod-acr`、地域 `cn-beijing`、生产账号 `1442361567788059`，ACS 对象通过短时凭据访问 Kubernetes API。临时访问配置未保存到仓库。
+状态：**网络基础设施与新 Pod 网段的固定公网出口已完成并验证；网络变更当时只验证了诊断 Pod，后续部分 .NET 工作负载已经位于新网段。项目 SDK、供应商白名单和资金/短信业务验收仍未全部完成。** 操作均显式使用阿里云 CLI Profile `ruishi-prod-acr`、地域 `cn-beijing`、生产账号 `1442361567788059`，ACS 对象通过短时凭据访问 Kubernetes API。临时访问配置未保存到仓库。
 
 ## 最终拓扑
 
@@ -31,7 +31,7 @@
 
 诊断期间，新 k/i 两区各自到两组 MySQL、两组 Redis、SmsCore 以及 MongoDB 双节点的 TCP 连接均成功；稳定 SNAT 后再次检查主要私网端口和双 MongoDB 节点均成功。两区到微信 API HTTPS 可达。公网回显的两个独立目标一致；`api.ipify.org` 拒绝连接、`ifconfig.me` 超时是该单个目标的失败，不作为整体 NAT 验收依据。
 
-完成后 10 个原有业务 Pod 均仍在旧网段，重启数为 0；Yangu、M1X 原 HTTPS 入口保持 401，网站 ECS 80/443 与 SmsCore 私网 3090 继续可达。未创建 DNAT、未修改 ALB、DNS、原业务 Deployment、SmsCore ECS 或旧七网段的 SNAT。
+网络变更完成当时，10 个原有业务 Pod 均仍在旧网段，重启数为 0；Yangu、M1X 原 HTTPS 入口保持 401，网站 ECS 80/443 与 SmsCore 私网 3090 继续可达。此后部分 .NET 工作负载被安排到新 Pod vSwitch，当前位置以[现场交接快照](HANDOVER-2026-09-26.md)重新读回为准。未创建 DNAT、未修改 ALB、DNS、SmsCore ECS 或旧七网段的 SNAT；后续项目部署和调度不应被倒推为本次网络变更的一部分。
 
 账号询价 API 对北京增强型跨可用区 NAT 实例费返回标价 `0.23 元/小时`、当前优惠后 `0.1955 元/小时`（RequestId `01A0DDE7-7871-55BF-BD1E-85CFD70C49A8`）。EIP 保有和 NAT 双向处理、公网出流量另按实账计；优惠和账单以实际周期为准。
 

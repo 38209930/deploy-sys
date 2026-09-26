@@ -1,6 +1,6 @@
 # ACS 公共公网出口：执行手册与当前门槛
 
-状态：**跨可用区 NAT、固定 EIP、旧业务路由隔离和两个新 Pod vSwitch 的稳定 SNAT 已创建并完成网络验收；原有业务 Pod 未迁移，项目 SDK 与业务验收待执行。** 更新：2026-09-26。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。实际资源和验证证据见[网络实施记录](egress-nat-execution-2026-09-26.md)，准备及回滚细节见[生产网络变更单](egress-nat-change-order.md)和[网段记录](network-constraints-2026-09-26.md)。
+状态：**跨可用区 NAT、固定 EIP、旧业务路由隔离和两个新 Pod vSwitch 的稳定 SNAT 已创建并完成网络验收；部分 .NET 业务 Pod 已明确落到新网段，Java Pod 仍在旧网段。项目真实 SDK 与业务结果仍须逐项验收。** 更新：2026-09-26 23:39。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。当前运行位置见[交接快照](HANDOVER-2026-09-26.md)，创建时的资源和证据见[网络实施记录](egress-nat-execution-2026-09-26.md)，准备及回滚细节见[生产网络变更单](egress-nat-change-order.md)和[网段记录](network-constraints-2026-09-26.md)。
 
 ## 1. 固定架构与边界
 
@@ -20,7 +20,7 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 | 公网 NAT / EIP | `ngw-2zetnd6golba2sju2q7jo`，跨可用区增强型；EIP `39.96.67.239` / `eip-2zeapte07xmvayr4852h5`，普通 BGP、按流量计费、10 Mbps 上限；仅两个新 Pod vSwitch 有稳定 SNAT |
 | 范围外来源 | 网站 ECS `i-2ze1j9z5b6vggyjr4bxv` 的私网 IP `172.31.238.203` 落在 ACS 北京 k 的 `/20` 内；同一系统路由表还服务其他五个 vSwitch |
 | SmsCore | ECS `i-2ze38hdx1sufodad2kz0`，私网 `172.27.182.18`，实例自带公网地址 `39.107.141.33`；**该地址不是本次新 EIP**。供应商观察到的实际源地址、白名单仍待核对 |
-| ACS 运行配置 | `acs-profile` 保留旧 k/i 并追加新 k/i，默认 selector 已实测仍选旧 k/i；10 个现有运行中业务 Pod 未迁移，两区诊断 Pod 已清理 |
+| ACS 运行配置 | `acs-profile` 保留旧 k/i 并追加新 k/i，默认 selector 曾实测仍选旧 k/i；网络创建完成时的 10 个业务 Pod 未迁移。此后 AI、售后、积分部分 Pod 已通过显式选址落在新网段；实际位置每次以 `kubectl get pods -A -o wide` 读回 |
 
 [阿里云 CreateNatGateway 文档](https://help.aliyun.com/zh/nat-gateway/developer-reference/api-vpc-2016-04-28-createnatgateway-natgws)说明首次创建增强型公网 NAT 会给 VPC 系统路由表自动加入指向 NAT 的 `0.0.0.0/0`。实施前已逐个把旧七个 vSwitch 迁入路由内容相同、无默认路由的自定义表；系统表随后只承载 NAT 专用 vSwitch。新网段的 vSwitch 级 SNAT 仅覆盖经明确选址的新 Pod；Namespace 本身不构成 NAT 来源隔离。实际路由和读回见[实施记录](egress-nat-execution-2026-09-26.md)。
 
@@ -51,8 +51,8 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 1. **已完成：**MongoDB 新网段回程、白名单及双区 TCP 检查；实时报价、路由内容对比；七个旧 vSwitch 逐个迁入旧业务表。本机 OpenVPN 仅在需要直连新 Pod 时另行调整。
 2. **已完成：**创建隔离的新 Pod/NAT vSwitch、跨可用区增强型公网 NAT（`EipBindMode=NAT`）、单一 EIP；系统表默认路由只作用于 NAT 专用 vSwitch，出口表默认路由只作用于两个新 Pod vSwitch。
 3. **已完成：**ACS 默认旧 k/i 选址护栏、新 k/i 诊断 Pod 临时 `/32` 测试和重建、两个新 vSwitch 的稳定 SNAT；临时条目与诊断 Pod 均已清理。两区私网和固定 EIP 验证见[实施记录](egress-nat-execution-2026-09-26.md)。
-4. 按 DGYE → VET → STOPMP → ETBST → DDMP → Yangu → M1X 逐项把已通过业务门槛的 Deployment 显式迁入新 vSwitch。每次验收真实 SDK外呼、私网、ALB、SmsCore 和任务状态；M1X 双角色分别核对。全部观察至少 24 小时并覆盖关键任务周期。
-5. .NET 按 AI → 售后工单 → 积分商城 → 新零售 → 经销商顺序迁移，各项目代码交付、配置、Worker/消费者交接及业务验收另按[发布手册](runbook.md)执行。
+4. **后续待执行：**Java 项目按项目级业务门槛逐项显式迁入新 vSwitch。DGYE、VET 当前为零副本；Yangu、M1X 正有用户使用，迁移窗口和回滚须单独安排。每次验收真实 SDK外呼、私网、ALB、SmsCore 和任务状态；M1X 双角色分别核对。
+5. **已有进度：**AI、售后、积分的部分 Pod 已落新网段；新零售和经销商当前仍在旧网段。原计划的 AI → 售后 → 积分 → 新零售 → 经销商是历史顺序，不能据此推定所有角色已完成迁移。业务验收及剩余角色接入按[交接快照](HANDOVER-2026-09-26.md)与[发布手册](runbook.md)逐项完成。
 
 ## 5. 跨语言外呼及业务验收
 

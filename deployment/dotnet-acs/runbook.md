@@ -1,17 +1,17 @@
 # .NET ACS 标准发布手册
 
-适用范围：北京 `ruishi-prod-acs` 本轮五项目。本文规定顺序与停止条件。实际创建资源时使用经代码会话验证的镜像、端口、环境变量和配置版本；任何变量尚未查实就停在该步。每项目各留一份填写完整的[发布记录](release-records.md)。
+适用范围：北京 `ruishi-prod-acs` 本轮五项目。本文是**后续发布或变更的步骤模板**，不代表所有步骤尚未做或已验收。当前实际副本和入口先看[交接快照](HANDOVER-2026-09-26.md)，API 命令见[阿里云 API 使用说明](aliyun-api-operations.md)。每项目变更使用已验证的镜像、端口、环境变量和配置版本；任何变量尚未查实就停在该步，并补[发布记录](release-records.md)。
 
-## 当前阶段：API 零副本预部署
+## 历史阶段：API 零副本预部署
 
-本阶段独立于下文的生产启动与切换。ACR 的 `ruishi-dotnet-prod` 是镜像命名空间；ACS 按项目使用 `ai-study`、`service-order`、`points-mall`、`new-retail`、`agent-query`。执行记录见[2026-09-26 预部署记录](zero-replica-predeploy-2026-09-26.md)。
+以下步骤记录最初预部署方法，**不是当前副本状态**。ACR 的 `ruishi-dotnet-prod` 是镜像命名空间；ACS 按项目使用 `ai-study`、`service-order`、`points-mall`、`new-retail`、`agent-query`。当时执行记录见[2026-09-26 预部署记录](zero-replica-predeploy-2026-09-26.md)。
 
 1. 每次阿里云 API 调用显式指定 `ruishi-prod-acr` Profile 和北京地域，先以 STS 核对账号 `1442361567788059`；同时检查 CLI 退出码及响应业务码。当前默认 Profile 属于其他账号。只有指定 Profile 的凭据实际失效时才提示用户重新登录；RAM/RBAC 拒绝单独报告。
 2. 通过 ACR API 查询、创建私有仓库，绑定 Codeup，按每角色已交付的独立 Dockerfile 和冻结源码引用创建规则。`CreateRepoSourceCodeRepo` 返回 `SOURCE_ACCOUNT_NOT_AVAILABLE` 时停止该代码源绑定并核对实例级 Codeup 账号状态，不重复盲试。构建一次只启动一个任务，读回源码 SHA、构建结果及镜像 digest。
 3. 通过 ACS/ACK OpenAPI 取得短时私网集群访问配置，再经 Kubernetes API 进行服务端校验、创建对应 Namespace、ServiceAccount、零副本 Deployment 和 API ClusterIP Service。临时配置不得进入聊天、日志或 Git；本阶段不创建资源配额、生产 Secret、Ingress、HPA 或 CronJob，不追加 ACR 凭据助手范围。
 4. 没有合格镜像 digest 的角色不创建 Deployment。读回确认所有新 Deployment 的期望及实际 Pod 数均为零，且现有 Java 工作负载无配置或副本变更。项目阻断项交独立代码会话完成。
 
-第 1 节的公网出口网络阶段已经完成；后续项目启动与切换仍按项目门槛执行，不因零副本资源或 NAT 准备完成而自动启动业务。
+第 1 节的公网出口网络阶段已经完成；当前若干业务角色已启动，售后 Worker 仍为零副本。后续任何扩容、迁移与切换仍按对象门槛执行。
 
 ## 0. 发布前冻结
 
@@ -23,7 +23,7 @@
 
 ## 1. 公共 NAT 出口准备
 
-网络阶段已通过阿里云 API 完成，实际路由、NAT、EIP、两个新 Pod vSwitch 的 SNAT 和双区私网/公网诊断见[2026-09-26 实施记录](egress-nat-execution-2026-09-26.md)。七个旧 vSwitch 已关联无默认路由的旧业务表；系统表只承载 NAT 专用 vSwitch。现有业务 Pod 尚未迁移。项目接入前须完成[公共 NAT 出口手册](egress-nat.md)要求的外呼、旧短信通道、任务副作用、第三方白名单和告警核验；逐项目验证真实 SDK 及供应商侧来源 IP，不能以诊断 `curl` 代替业务验收。
+网络阶段已通过阿里云 API 完成，实际路由、NAT、EIP、两个新 Pod vSwitch 的 SNAT 和双区私网/公网诊断见[2026-09-26 实施记录](egress-nat-execution-2026-09-26.md)。七个旧 vSwitch 已关联无默认路由的旧业务表；系统表只承载 NAT 专用 vSwitch。当前 AI、售后工单、积分商城、新零售和经销商查询已有部分 ACS 工作负载，Java 工作负载仍需按项目核对是否位于新 SNAT 网段；售后 Worker 为零副本，其余已部署 .NET Worker 当前状态以[交接快照](HANDOVER-2026-09-26.md)为准。项目接入前须完成[公共 NAT 出口手册](egress-nat.md)要求的外呼、旧短信通道、任务副作用、第三方白名单和告警核验；逐项目验证真实 SDK 及供应商侧来源 IP，不能以诊断 `curl` 代替业务验收。
 
 北京跨可用区 NAT 账号报价为 ¥0.1955/小时（当前优惠价；官方标价 ¥0.23/小时），另计 EIP 保有、NAT 处理量和公网出流量；10 Mbps 是 EIP 初始上限。未对现有混用的 ACS `/20` 网段创建整段 SNAT；接入具体项目时再复核带宽和实际账单。
 
@@ -43,9 +43,9 @@
 
 正式域名目前仍解析旧 ALB；先获取对象明确的首次生产启动/停旧服务/切流授权，再按下述步骤执行：
 
-1. **首次启动新 API 前**核对旧新 API 并行访问数据无冲突，逐项列出 API 内启动的定时器、队列消费者和其他 `HostedService`。若任一消费者可能与旧实例同时处理业务，先由该项目代码会话评审幂等及隔离/交接机制，写入项目发布记录并演练；未完成前不得启动新 API 与旧 API 并行。积分商城 Api 已确认会启动 Redis 消费者，属于此阻断项。若 API 无法先与旧版并行，停止并按该项目已评审的独立维护方案执行，禁止现场发明双写策略。
+1. **首次启动或重新并行启动 API 前**核对旧新 API 并行访问数据无冲突，逐项列出 API 内启动的定时器、队列消费者和其他 `HostedService`。若任一消费者可能与旧实例同时处理业务，先由该项目代码会话评审幂等及隔离/交接机制，写入项目发布记录并演练。积分商城 FrontApi 目前仍在 ECS，新 ACS Back 是不同角色，Worker 已独立运行；**不能把旧 Front 误认成旧 Back 或 Worker**。未来迁移积分 Front 时，仍须专门评审其 Redis 消费者。若 API 无法与旧版并行，按该项目已评审的维护方案执行。
 2. 前一步通过后，将 Front/Admin API 扩至 1，观察镜像拉取、进程、startup/readiness、数据库与缓存连接、内存峰值。通过新 ALB 的 Host/SNI 验证登录、读写主链、回调模拟或受控真实请求；401/403/404 只证明网关可达。
-3. 对有 Worker 的项目：停止旧 Worker 并禁用自动拉起；确认进程退出、在途任务结束或状态明确、锁与待办队列可解释；再扩 ACS Worker 到 1。验证调度加载、首次到期任务、心跳、业务结果和重复执行防护。资金任务不自动批量补跑。
+3. 对**尚未交接或重新交接**的 Worker：停止旧 Worker 并禁用自动拉起；确认进程退出、在途任务结束或状态明确、锁与待办队列可解释；再扩 ACS Worker 到 1。验证调度加载、首次到期任务、心跳、业务结果和重复执行防护。资金任务不自动批量补跑。2026-09-26 23:39 的例子：售后 Worker 仍为 0；积分 Worker 已为 1/1，不能照此步骤再次启动。
 4. 确认证书、新 ALB 精确 Host 转发、客户端实测、回调白名单和生产业务验收。再将该项目域名由旧 ALB 记录切到新 ALB DNS `alb-olyb9enxszy3f42nnn.cn-beijing.alb.aliyuncsslb.com`；检查权威 DNS、递归 DNS 和实际 HTTPS 请求。旧 API 保留至 TTL 与在途请求结束，旧 Worker 继续停止。
 5. 记录切换时间、镜像 digest、Secret 版本、结构版本、Ingress/ALB 规则、DNS 前后值、业务证据和回滚入口。观察至少 24 小时并覆盖一次关键任务周期，随后才开始下一项目。经销商没有 Worker，不执行额外的数据导入；切流前仍需验证旧新版本对同一生产库并行写入的兼容性。
 
