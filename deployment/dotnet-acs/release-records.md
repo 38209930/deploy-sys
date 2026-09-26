@@ -16,6 +16,8 @@
 
 售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。经销商是单体 API，三个域名都指向同一个 Service；`rsqapi-ft`、`rsqapi-bk` 于本轮追加，公网 HTTPS `/health/ready` 均返回 200，`POST /api/config/city_list` 返回 200，未认证的 `POST /back/store/pages` 返回 401。部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
 
+AI 自习室 Back 初次仅验证了健康接口，后台前端实际调用时因生产配置缺少 `Security:CorsAllowedOrigins` 被浏览器拦截。已在 Deployment 运行环境中补入 `https://ai-study-manage.svision100.com`、`https://ai-study-biz.svision100.com`、`https://ai-study-h5.svision100.com`，完成滚动更新。三来源预检均返回 204，`POST /auth/login` 返回业务层响应且带正确 CORS 头；`/health/live`、`/health/ready`、`/back/public/info` 均返回 200。镜像 digest 未变更，当前 Back Pod 1/1 Ready、重启次数为 0。此项修复说明：API 健康检查通过不等于浏览器业务可用，后续项目必须增加真实前端 Origin 的预检和实际接口验收。
+
 ## 2026-09-26 零副本预部署状态（历史快照，已被后续发布替代）
 
 ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建；[资源 ID 和 RequestId 见执行记录](zero-replica-predeploy-2026-09-26.md)。镜像构建、digest、ACS 项目 Namespace、Deployment 和 Service 均未完成；所有新角色实际 Pod 数为零。Codeup 绑定 API 对 `points-mall-front` 返回 `SOURCE_ACCOUNT_NOT_AVAILABLE`，其余仓库未重复尝试同一失败条件。项目源码与构建门槛继续以各节记录为准。
@@ -25,7 +27,7 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 - 目标：`ai-study` Namespace；`ai-study-back` 1 CPU/2 GiB、`ai-study-worker` 0.5 CPU/1 GiB；FrontApi 留旧 ECS `i-2ze2s8pzq0kvqu28iml8`。
 - Host：`rsst-back-api.svision100.com`。当前接入与验收结果见本页顶部；旧 DNS 为 `39.105.188.147`。
 - 源码：`/Volumes/SSD/work/mall/ai自习室/prod@aliyun/ai-study-api`；ACS 适配分支 `deploy/dotnet-acs-ai-study` 已推送 `213984d`，交接说明在 `RuishiStore/ACS_DEPLOYMENT.md`。两个 Release 构建通过，Docker 基础镜像下载未完成，镜像运行未验收。本机业务改动仍未纳入该提交；最终 `release` SHA、两个镜像 digest、Secret 版本、结构版本：待验证。
-- 切换关键点：后台登录、卡与账户管理、同步任务、旧 FrontApi 与新 BackApi/Worker 对同一数据库的兼容；旧 Worker 停机及自动拉起、锁和首个到期任务：待验证。适配分支的 Worker 默认为不注册定时任务，开启需 `Worker__ScheduledJobsEnabled=true` 和项目专用 `Worker__QuartzLockName`；新 MySQL 命名锁不约束旧 ECS Worker，旧进程退出仍是硬门槛。
+- 切换关键点：后台登录、卡与账户管理、同步任务、旧 FrontApi 与新 BackApi/Worker 对同一数据库的兼容；CORS 已按三个生产前端来源补齐并完成预检及登录接口验收。旧 Worker 停机及自动拉起、锁和首个到期任务：待验证。适配分支的 Worker 默认为不注册定时任务，开启需 `Worker__ScheduledJobsEnabled=true` 和项目专用 `Worker__QuartzLockName`；新 MySQL 命名锁不约束旧 ECS Worker，旧进程退出仍是硬门槛。
 - 生产授权、旧服务命令、外呼表、第三方白名单、任务结果、24 小时观察及回滚证据：待验证。
 
 ## 售后工单（第二项）
