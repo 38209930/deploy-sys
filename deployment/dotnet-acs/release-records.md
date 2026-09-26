@@ -1,15 +1,29 @@
 # 五项目发布记录
 
-状态：预填的部署记录，所有「待验证」均为切换阻断项。只填资源 ID、版本和证据位置，不填配置值、密钥、手机号或客户数据。每项目分别记录实际授权、维护窗口、切换时间、24 小时观察起止和回滚决定。
+状态：包含早期预部署记录；当前入口状态以“2026-09-26 正式域名接入核验”为准。只填资源 ID、版本和证据位置，不填配置值、密钥、手机号或客户数据。
 
-## 2026-09-26 零副本预部署状态
+## 2026-09-26 正式域名接入核验
+
+当前 ACS 集群 `ruishi-prod-acs` 使用 ALB `alb-olyb9enxszy3f42nnn`。以下域名均有精确 Host 的 `alb` Ingress，DNS 指向该 ALB；从公网发起 HTTPS 请求，证书校验通过，`/health/ready` 返回 200。
+
+| 项目 | 正式域名 | Ingress / 后端 | 当前 Deployment |
+|---|---|---|---|
+| 售后工单 Front | `rsod-front-api.svision100.com` | `service-order/service-order-front-alb` → `service-order-front:8080` | 1/1 Ready |
+| 售后工单 Back | `rsod-back-api.svision100.com` | `service-order/service-order-back-alb` → `service-order-back:8080` | 1/1 Ready |
+| AI 自习室 Back | `rsst-back-api.svision100.com` | `ai-study/ai-study-back-alb` → `ai-study-back:8080` | 1/1 Ready |
+| 积分商城 Back | `rsjf-back-api.svision100.com` | `points-mall/points-mall-back-alb` → `points-mall-back:8080` | 1/1 Ready |
+| 经销商查询前后台 | `4l-api.svision100.com` | `agent-query/agent-query-api-alb` → `agent-query-api:8080` | 1/1 Ready |
+
+售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。经销商是单体 API，旧 `rsqapi-ft`、`rsqapi-bk` 不是本次入口。部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
+
+## 2026-09-26 零副本预部署状态（历史快照，已被后续发布替代）
 
 ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建；[资源 ID 和 RequestId 见执行记录](zero-replica-predeploy-2026-09-26.md)。镜像构建、digest、ACS 项目 Namespace、Deployment 和 Service 均未完成；所有新角色实际 Pod 数为零。Codeup 绑定 API 对 `points-mall-front` 返回 `SOURCE_ACCOUNT_NOT_AVAILABLE`，其余仓库未重复尝试同一失败条件。项目源码与构建门槛继续以各节记录为准。
 
 ## AI 自习室（第一项）
 
 - 目标：`ai-study` Namespace；`ai-study-back` 1 CPU/2 GiB、`ai-study-worker` 0.5 CPU/1 GiB；FrontApi 留旧 ECS `i-2ze2s8pzq0kvqu28iml8`。
-- Host：`rsst-back-api.svision100.com`。旧 DNS 为 `39.105.188.147`；新 ALB 证书握手已验证，Host 规则尚无。
+- Host：`rsst-back-api.svision100.com`。当前接入与验收结果见本页顶部；旧 DNS 为 `39.105.188.147`。
 - 源码：`/Volumes/SSD/work/mall/ai自习室/prod@aliyun/ai-study-api`；ACS 适配分支 `deploy/dotnet-acs-ai-study` 已推送 `213984d`，交接说明在 `RuishiStore/ACS_DEPLOYMENT.md`。两个 Release 构建通过，Docker 基础镜像下载未完成，镜像运行未验收。本机业务改动仍未纳入该提交；最终 `release` SHA、两个镜像 digest、Secret 版本、结构版本：待验证。
 - 切换关键点：后台登录、卡与账户管理、同步任务、旧 FrontApi 与新 BackApi/Worker 对同一数据库的兼容；旧 Worker 停机及自动拉起、锁和首个到期任务：待验证。适配分支的 Worker 默认为不注册定时任务，开启需 `Worker__ScheduledJobsEnabled=true` 和项目专用 `Worker__QuartzLockName`；新 MySQL 命名锁不约束旧 ECS Worker，旧进程退出仍是硬门槛。
 - 生产授权、旧服务命令、外呼表、第三方白名单、任务结果、24 小时观察及回滚证据：待验证。
@@ -17,7 +31,7 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 ## 售后工单（第二项）
 
 - 目标：`service-order` Namespace；`service-order-front` 1 CPU/2 GiB、`service-order-back` 0.5 CPU/1 GiB、`service-order-worker` 1 CPU/2 GiB；旧 ECS `i-2ze710cj1qpe7s7zv5sq`。
-- Host：`rsod-front-api.svision100.com`、`rsod-back-api.svision100.com`。旧 DNS 为 `101.201.60.62`；新 ALB 证书握手已验证，Host 规则尚无。
+- Host：`rsod-front-api.svision100.com`、`rsod-back-api.svision100.com`。当前接入与验收结果见本页顶部；旧 DNS 为 `101.201.60.62`。
 - 源码：`/Volumes/SSD/work/mall/售后工单系统/service-order-api`；ACS 适配分支 `deploy/dotnet-acs-service-order` 已推送 `fb36c8a`，交接说明在 `Doc/release/ACS容器部署适配说明.md`。三个 Linux x64 Release publish 通过；Docker 基础镜像下载未完成，容器运行未验收。远端尚无 `release` 分支，最终发布基线、三个 digest、Secret/结构版本：待验证。
 - 切换关键点：工单创建/流转、ERP 同步、发货与退款状态、聚水潭 token、任务游标和 Redis 锁、短信业务事件幂等；旧 Worker 首次停机和队列核验：待验证。Front/Admin 当前 Kestrel 端口为 **3080/3081**，与本轮统一容器端口 8080 不同；若沿用 8080，应显式覆盖 `Kestrel__EndPoints__Http__Url` 并实测探针与 Service，不能只设置 `ASPNETCORE_URLS`。Worker 无 HTTP；Redis 任务锁为固定 TTL，不能单靠锁保证跨副本独占。短信及 ERP 幂等所需唯一索引须只读核对。构建产物包含被代码会话标为非敏感的 `appsettings.Production.json`，发布前仍需检查镜像没有真实生产连接与密钥，敏感值全部由外部注入。
 - 生产授权、外呼白名单、真实业务回调、24 小时观察及回滚证据：待验证。
@@ -25,7 +39,7 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 ## 积分商城（第三项）
 
 - 目标：`points-mall` Namespace；`points-mall-front` 1 CPU/2 GiB、`points-mall-back` 0.5 CPU/1 GiB、`points-mall-worker` 0.5 CPU/1 GiB；旧 ECS `i-2ze3w6i78cobsmmfo2y9`。
-- Host：`rsjf-front-api.svision100.com`、`rsjf-back-api.svision100.com`。旧 DNS 为 `101.201.60.62`；新 ALB 证书握手已验证，Host 规则尚无。
+- Host：旧 Front 继续运行在 ECS；当前 ACS Back 使用 `rsjf-back-api.svision100.com`，接入与验收结果见本页顶部。旧 DNS 为 `101.201.60.62`。
 - 源码：`/Volumes/SSD/work/mall/积分商城/jifen-api-release`；ACS 适配分支 `deploy/dotnet-acs-points-mall` 已推送 `af33e93`，交接说明在 `scripts/deploy/acs/README.md`。三个 Release 构建通过；Docker 基础镜像下载未完成，容器运行未验收。最终 `release` SHA、三个 digest、Secret/结构版本：待验证。
 - 切换关键点：积分余额与兑换、扣减幂等、退单返还、现金支付相关流程、短信和 Worker 错过任务规则：待验证。Worker 可通过 `Worker__EnableQuartz=false` 预启动；启用调度前必须确认旧 Worker 退出。**Api 启动时还会启动 Redis 消息消费者**，旧新 Api 并行可能同时消费；在评审消费者的队列语义、幂等和交接步骤前，禁止按通用的「先启动新 API、保留旧 API」流程切换。
 - 生产授权、第三方白名单、旧 Worker 交接、24 小时观察及回滚证据：待验证。
