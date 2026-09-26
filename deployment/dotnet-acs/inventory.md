@@ -12,7 +12,9 @@
 
 合计 13 个 Deployment，9 CPU / 18 GiB。Namespace、仓库名是本轮建议命名，**尚未创建**；如与现有组织约定冲突，必须在资源创建前一次性修订本表。AI 的旧 FrontApi、经销商同 ECS 上的以旧换新不能因为本轮操作被停止。
 
-2026-09-26 DNS 只读查询：新零售、AI、经销商的目标 Host 当前解析到旧 ALB IP `39.105.188.147`；积分商城、售后工单解析到旧 ALB IP `101.201.60.62`。各项目的前后端同 IP。正式变更前仍要核对权威 DNS、TTL 与是否存在并行解析记录。
+2026-09-26 DNS 只读查询：新零售、AI、经销商的目标 Host 当前解析到旧 ALB IP `39.105.188.147`；积分商城、售后工单解析到旧 ALB IP `101.201.60.62`。各项目的前后端同 IP。直接向权威服务器 `vip1.alidns.com` 查询，九个 Host 均为单条 A 记录、TTL **600 秒**。切换前再次查权威记录；旧 API 至少覆盖 TTL 和在途请求窗口，实际客户端缓存可能更长，不能只按 600 秒保证全部旧流量消失。
+
+当前阿里云 CLI 身份调用 `Alidns.DescribeDomainRecords(svision100.com)` 返回 `IncorrectDomainUser`，说明该身份**不能管理这组正式 DNS**。切流前须明确实际管理账号或由域名管理员执行记录变更；未落实操作人与回滚权限，不得进入正式切流。
 
 统一在拟建 ACR 命名空间 `ruishi-dotnet-prod` 下使用以下仓库名。Kubernetes Deployment、API Service 采用同名；ServiceAccount 采用项目 Namespace 名。完整镜像地址和 digest 以 ACR 实际创建与构建结果为准。
 
