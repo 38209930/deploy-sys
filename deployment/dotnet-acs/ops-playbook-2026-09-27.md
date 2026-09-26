@@ -49,6 +49,7 @@
 | 费用 | 账单中心核对 NAT/EIP/ACS/ACR 费用 | NAT 约 ¥0.1955/小时；首月累计 400 元预警、600 元升级复核（只报管理员，不自动断网） |
 | EIP 带宽 | CloudMonitor 出带宽峰值 | 持续 5 分钟 > 7 Mbps 预警；> 8.5 Mbps 且有业务失败时处置 |
 | ACR | 实例存储、构建队列、镜像 digest 与现网一致性 | 经济版 1 并发构建、命名空间 5 个上限；构建必须串行 |
+| 资源用量采样 | 用 [resource-snapshot.sh](resource-snapshot.sh)（两次 cgroup 采样，只读）采一轮全部 Pod 的内存/RSS/CPU | 内存（含缓存）超过 limit 的 **80%** 即评估扩规格；重点盯 `ddmp-api`（1Gi 档中最高，2026-09-27 采样 53%/RSS 44%）。ACS 无 metrics-server，`kubectl top` 不可用 |
 | ECS 盘点 | 实例清单与状态对照 §1 | 出现非预期 Stopped/新增实例立即报管理员 |
 
 ## 4. 每月任务
