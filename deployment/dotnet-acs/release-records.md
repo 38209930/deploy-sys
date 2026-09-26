@@ -13,11 +13,13 @@
 | AI 自习室 Back | `rsst-back-api.svision100.com` | `ai-study/ai-study-back-alb` → `ai-study-back:8080` | 1/1 Ready |
 | 积分商城 Back | `rsjf-back-api.svision100.com` | `points-mall/points-mall-back-alb` → `points-mall-back:8080` | 1/1 Ready |
 | 新零售 Front / Back | `ns-front-api.svision100.com`、`ns-back-api.svision100.com` | `new-retail/new-retail-front-alb`、`new-retail/new-retail-back-alb` → 对应 Service:8080 | 各 1/1 Ready |
-| 经销商查询前后台 | `4l-api.svision100.com` | `agent-query/agent-query-api-alb` → `agent-query-api:8080` | 1/1 Ready |
+| 经销商查询前后台 | `4l-api.svision100.com`、`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` | `agent-query/agent-query-api-alb` → `agent-query-api:8080` | 1/1 Ready |
 
-售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。经销商当前只确认 `4l-api.svision100.com` 为 ACS Ingress Host；历史记录中的 `rsqapi-ft`、`rsqapi-bk` 不作为当前已接入域名依据。七个当前 .NET API Host 的公网 HTTPS `/health/ready` 均在 23:39 核验返回 200；部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
+售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。七个当前 .NET API Host 的公网 HTTPS `/health/ready` 均在 23:39 核验返回 200；部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
 
 AI 自习室 Back 初次仅验证了健康接口，后台前端实际调用时因生产配置缺少 `Security:CorsAllowedOrigins` 被浏览器拦截。已在 Deployment 运行环境中补入 `https://ai-study-manage.svision100.com`、`https://ai-study-biz.svision100.com`、`https://ai-study-h5.svision100.com`，完成滚动更新。三来源预检均返回 204，`POST /auth/login` 返回业务层响应且带正确 CORS 头；`/health/live`、`/health/ready`、`/back/public/info` 均返回 200。镜像 digest 未变更，当前 Back Pod 1/1 Ready、重启次数为 0。此项修复说明：API 健康检查通过不等于浏览器业务可用，后续项目必须增加真实前端 Origin 的预检和实际接口验收。
+
+经销商查询的三个 Host 均指向同一个 `agent-query-api:8080`，不是三个独立应用。初次验证发现生产 Secret 缺少 `DealerQuery:AllowedOrigins`，浏览器预检返回 204 但没有 `Access-Control-Allow-Origin`。已通过 ACS Kubernetes API 只更新 `agent-query-api-runtime-config-v3` 的该配置项，加入 `https://rsqh5.svision100.com`、`https://rsqapi-ft.svision100.com`、`https://rsqapi-bk.svision100.com`，并完成单 Pod 滚动更新；Secret 内容未写入日志。两个别名的 `GET /health/ready`、`POST /api/config/city_list` 均返回 200，来自 `https://rsqh5.svision100.com` 的 OPTIONS 预检和登录接口均返回正确 CORS 头。PC 页面实际部署域名若不是上述来源，须将该页面的精确 origin 加入 `DealerQuery:AllowedOrigins` 后再做浏览器验收。
 
 ## 2026-09-26 零副本预部署状态（历史快照，已被后续发布替代）
 
@@ -58,10 +60,10 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 ## 经销商查询（第五项）
 
 - 目标：`agent-query` Namespace 中**一个** `agent-query-api` Deployment（0.5 CPU/1 GiB）、一个 ClusterIP Service，同时承载前台与后台接口；**无 Worker**。旧 ECS `i-2ze6v19gpeg6t864exra` 上的以旧换新不受影响。
-- 正式 Host：当前只将 `4l-api.svision100.com` 作为已核实的 ACS ALB Host，由 `agent-query-api-alb` Ingress 接入同一个单体 API；不需要为前后台分别创建 Deployment。`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 属于历史记录，未在本次当前 Ingress 读回中作为现行 Host 记录。
+- 正式 Host：`4l-api.svision100.com`、`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 均已核实为 ACS ALB Host，由 `agent-query-api-alb` Ingress 接入同一个单体 API；不需要为前后台分别创建 Deployment。
 - 源码：`/Volumes/SSD/work/mall/经销商查询/agent_query_api_net10`，`release` SHA `5fc6913727c7ab084424bb601f13ee7e5b4acd16`；合并宿主图片上传使用原有 OSS。ACR `agent-query-api` 构建成功，镜像 digest `sha256:064dc0aa46145cf44e907c5567f3bb607139fb17c7063c083e11aa4e0b111ea5`。
 - 2026-09-26 已通过阿里云 `DescribeDBInstanceNetInfo` 核实原生产 RDS、Redis 各自的私网和公网地址属于**同一实例**，私网地址均在 ACS 所在 VPC。仅将经销商专用运行配置中的这两个主机名改为私网地址，保留原库名、账号及其他配置，创建 Secret `agent-query-api-runtime-config-v3`。RDS 查询 RequestId `01A0DD26-02C2-5995-B064-2A1A0560129C`，Redis 查询 RequestId `01A0DD26-4708-526F-9168-E9CB845088BF`。旧 v2 Secret 保留作回退。
-- 已将单体 Deployment 扩为 **1/1 Ready**，固定上述镜像 digest，Pod 无重启，`/health/live` 与包含 MySQL、Redis 检查的 `/health/ready` 均为 200。创建精确 Host 的 `agent-query-api-alb` Ingress（UID `8e745050-15fd-4dbb-87bf-d225384f7b69`），HTTPS 443 → ClusterIP Service `agent-query-api:8080`；正式域名 `4l-api.svision100.com` 已返回 200，TLS 校验通过。
+- 已将单体 Deployment 扩为 **1/1 Ready**，固定上述镜像 digest，Pod 无重启，`/health/live` 与包含 MySQL、Redis 检查的 `/health/ready` 均为 200。创建精确 Host 的 `agent-query-api-alb` Ingress（UID `8e745050-15fd-4dbb-87bf-d225384f7b69`），HTTPS 443 → ClusterIP Service `agent-query-api:8080`；三个正式域名均已返回 200，TLS 校验通过。
 - 经正式域名只读验收：`POST /api/store/pages` 成功、门店总数 1917；`POST /api/store/tags` 成功；`POST /api/config/city_list` 成功、城市总数 341；未认证访问 `/back/store/pages` 返回 401；空账号登录返回预期业务失败。OSS 使用北京内网端点；对现有 `agent-query-res` Bucket 的签名只读 `HEAD` 返回 200，OSS RequestId `6AB798047CD36C383480A9BD`。未执行真实图片上传、有效管理员登录、门店写入或小程序端到端验收，这些及 24 小时观察仍待业务侧完成。
 - 本次经销商服务依赖私网 RDS、Redis、OSS，**无需等待公网 NAT 即可提供已验证的门店查询**；若后续启用地图等公网外呼，仍须按公共出口方案单独验收。公共 NAT/EIP 已由独立网络变更创建，但该经销商 Pod 当前仍在旧网段，不能把共享 NAT 的存在当成该项目已经通过公网外呼验收。
 
