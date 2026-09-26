@@ -41,11 +41,12 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 ## 经销商查询（第五项）
 
 - 目标：`agent-query` Namespace 中**一个** `agent-query-api` Deployment（0.5 CPU/1 GiB）、一个 ClusterIP Service，同时承载前台与后台接口；**无 Worker**。旧 ECS `i-2ze6v19gpeg6t864exra` 上的以旧换新不受影响。
-- 正式 Host：`4l-api.svision100.com` 已指向新 ALB；尚未创建该 Host 的 Ingress，未接入正式流量。旧 `rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 是历史入口，不作为本次两个新服务部署。
+- 正式 Host：`4l-api.svision100.com` 已指向新 ALB，并由 `agent-query-api-alb` Ingress 接入单体 API。旧 `rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` 是历史入口，不作为本次两个新服务部署。
 - 源码：`/Volumes/SSD/work/mall/经销商查询/agent_query_api_net10`，`release` SHA `5fc6913727c7ab084424bb601f13ee7e5b4acd16`；合并宿主图片上传使用原有 OSS。ACR `agent-query-api` 构建成功，镜像 digest `sha256:064dc0aa46145cf44e907c5567f3bb607139fb17c7063c083e11aa4e0b111ea5`。
-- ACS 已创建单体 Deployment 和 Service，Deployment 固定上述 digest，期望副本 **0**，没有创建 Ingress。已从旧项目受控源码提取现用 OSS 凭据并下发至专用 Secret `agent-query-api-runtime-config-v2`；新宿主 `/health/live` 为 200。北京 OSS 公网端点从 Pod 超时，官方内网端点 `oss-cn-beijing-internal.aliyuncs.com:443` 可达，v2 已改用内网端点；真实上传仍待验收。
-- 生产 MySQL 与 Redis 主机当前解析到公网 IP，从 Pod 的 TCP 连接均超时，`/health/ready` 返回 503；北京 VPC 此时查询不到公网 NAT。试运行实例已停止，不能将该状态标为上线。
-- 上线门槛：MySQL、Redis 从 ACS 可达；OSS 上传、读取验证；单体 API 的前后台登录、门店查询和维护验收；然后才扩到 1 并接入 `4l-api.svision100.com`。公网 NAT 由独立任务处理，本次不擅自创建。生产写入、回滚及 24 小时观察证据：待验证。
+- 2026-09-26 已通过阿里云 `DescribeDBInstanceNetInfo` 核实原生产 RDS、Redis 各自的私网和公网地址属于**同一实例**，私网地址均在 ACS 所在 VPC。仅将经销商专用运行配置中的这两个主机名改为私网地址，保留原库名、账号及其他配置，创建 Secret `agent-query-api-runtime-config-v3`。RDS 查询 RequestId `01A0DD26-02C2-5995-B064-2A1A0560129C`，Redis 查询 RequestId `01A0DD26-4708-526F-9168-E9CB845088BF`。旧 v2 Secret 保留作回退。
+- 已将单体 Deployment 扩为 **1/1 Ready**，固定上述镜像 digest，Pod 无重启，`/health/live` 与包含 MySQL、Redis 检查的 `/health/ready` 均为 200。创建精确 Host 的 `agent-query-api-alb` Ingress（UID `8e745050-15fd-4dbb-87bf-d225384f7b69`），HTTPS 443 → ClusterIP Service `agent-query-api:8080`；正式域名 `4l-api.svision100.com` 已返回 200，TLS 校验通过。
+- 经正式域名只读验收：`POST /api/store/pages` 成功、门店总数 1917；`POST /api/store/tags` 成功；`POST /api/config/city_list` 成功、城市总数 341；未认证访问 `/back/store/pages` 返回 401；空账号登录返回预期业务失败。OSS 使用北京内网端点；对现有 `agent-query-res` Bucket 的签名只读 `HEAD` 返回 200，OSS RequestId `6AB798047CD36C383480A9BD`。未执行真实图片上传、有效管理员登录、门店写入或小程序端到端验收，这些及 24 小时观察仍待业务侧完成。
+- 本次经销商服务依赖私网 RDS、Redis、OSS，**无需等待公网 NAT 即可提供已验证的门店查询**；若后续启用地图等公网外呼，仍须按公共出口方案单独验收。未创建 NAT、EIP，也未改其他项目。
 
 ## 每项完成时补录
 
