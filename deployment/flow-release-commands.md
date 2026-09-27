@@ -22,7 +22,7 @@
 | 项 | 结论 |
 |---|---|
 | 云效组织 | `svision100的代码库`，org `659a5cefd64a2eb2dceb72f3`；`power-application-user` 已手动同步为普通成员，`ListJoinedOrganizations` 和 `ListPipelines` API 成功；正式流水线 `5300352` 已创建 |
-| devops API | 先前在旧组织完成 CreatePipeline → StartPipelineRun → GetPipelineRun → DeletePipeline 冒烟；当前 svision100 组织中 `power-application-user` 已创建并回读 etbst-api 正式流水线 `5300352`，尚未触发真实构建 |
+| devops API | 当前 svision100 组织中 `power-application-user` 已创建并回读 etbst-api 正式流水线 `5300352`；首次真实构建运行 `1` 因连接 ACR 超时失败，未推送镜像或进入部署 |
 | 服务连接 | ACR `lhjkwns3zhj879ic`（API ID `943301`）、Codeup `xdghn746erjk8hdo`（API ID `580982`）、ACK `fmayt57b9ttcjq61`（API ID `943303`）均可由 `power-application-user` 通过 API 查询；实际拉取、推送和集群访问仍待流水线验证 |
 | etbst 仓库 | `/Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api`，origin `codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api.git`，`release` 分支在用，根目录 Dockerfile（多阶段 Maven 构建，适配容器部署） |
 | Codeup API | svision100 主账号确认目标仓库 ID `6424213`，并经 `AddRepositoryMember` 将 `power-application-user` 加为单仓库浏览者（20）；管理员成员列表与该 RAM 用户的 `ListRepositories` 均回读成功 |
@@ -30,6 +30,8 @@
 | ACS/CS API | 同一 Profile 于 2026-09-27 复核 `DescribeClusterUserKubeconfig` 成功（未读取或保存内容）；此前 `ErrorClusterNotFound` 不代表当前持续无权 |
 
 云效组织成员、目标代码仓库浏览权限及三个服务连接可见性已解决。已在 Flow 注册目标集群 `ruishi-prod-acs`，集群 ID `UIuvaR8vFrIjY4lj`，`power-application-user` 为使用者。服务连接 ID、真实 ACS 集群 ID 与 Flow 注册集群 ID 是不同对象。2026-09-27 以该 ID 执行 `apply` 成功创建流水线 `5300352`，并通过 `GetPipeline` 回读 YAML；此前 OCR 将大写 `I`/小写 `l` 混淆导致的“不存在”报错已解决。
+
+2026-09-27 首次手动触发运行 `1`：源代码已拉取到构建任务，登录 `ruishi-prod-registry.cn-beijing.cr.aliyuncs.com` 超时，构建任务 `524714934` 失败；没有镜像推送、人工确认或 ACS 写入。ACR 企业版实例 `cri-73ffxebpi6ruw6sn` 的公网访问白名单已开启，目前有 3 条既有规则。按[云效构建集群官方文档](https://help.aliyun.com/zh/yunxiao/user-guide/build-a-cluster)核对北京公共构建集群与 Flow 服务端出口地址，待对该实例追加所需 /32 白名单后重新触发构建；网络改动需单独授权。脚本已补充 `FAIL` 终态识别，避免再次持续轮询失败运行。
 
 注意：`ListServiceConnections` 查询 Codeup 时必须传 `--sericeConnectionType codeup`（小写）；CLI 帮助列出的 `Codeup`（大写）会返回空列表。此前由此造成的“连接未生效”判断已纠正。
 

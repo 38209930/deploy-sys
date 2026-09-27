@@ -134,7 +134,7 @@ wait_run() {
         echo "run_result=SUCCESS run_id=$run_id"
         return 0
         ;;
-      FAILED|CANCELED)
+      FAIL|FAILED|CANCELED|CANCELLED)
         echo "run_result=$overall run_id=$run_id"
         return 1
         ;;
