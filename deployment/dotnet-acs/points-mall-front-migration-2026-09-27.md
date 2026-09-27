@@ -1,6 +1,6 @@
 # 积分商城 FrontApi 迁移执行记录（2026-09-27）
 
-状态：ACS 已启动并通过新 ALB 定向健康检查；域名持有人已切换 DNS，权威及公共解析器已返回新 ALB。递归缓存过期后的普通域名请求及业务验收待记录。本文只记录已读回的事实，不含密钥或运行配置值。
+状态：ACS 已启动，域名持有人已切换 DNS；通过公共 DoH 解析直接请求正式域名 `/health/ready` 为 200。旧解析缓存客户端的过渡期及完整业务验收仍需观察。本文只记录已读回的事实，不含密钥或运行配置值。
 
 ## 对象与交接边界
 
@@ -24,16 +24,17 @@
 | 9 | 域名持有人切换 CNAME | 用户确认已切换；`223.5.5.5` 与 `1.1.1.1` 查询均返回 `alb-olyb9enxszy3f42nnn.cn-beijing.alb.aliyuncsslb.com`，TTL 600 秒。本机递归缓存当时仍指向旧 ALB，普通请求暂为 502，待缓存过期复验。 |
 | 10 | FrontApi 只读业务接口核对 | 保持正式 Host/SNI 定向新 ALB，`GET /public/info` 返回 HTTP 200，TLS 校验通过；未触发订单、短信或支付动作。 |
 | 11 | 以公共 DNS 的实际 A 记录验证入口 | `223.5.5.5` 返回新 ALB 的 `47.93.187.192`、`39.107.190.79`；分别以正式 Host/SNI 连接，两地址的 `/health/live` 与 `/public/info` 均为 HTTP 200 且 TLS 校验通过。本机路由器 DNS 同时仍缓存旧 A 记录，普通本机请求仍可能超时。 |
+| 12 | 公共 DNS 路径的正式域名验收 | 使用阿里云公共 DoH 解析，不指定 IP，直接请求 `https://rsjf-front-api.svision100.com/health/ready`，HTTP 200、TLS 校验结果 0，实际连接新 ALB 地址 `39.107.190.79`。 |
 
 ## 后续完成条件
 
-1. 等待旧 DNS 缓存过期后核对普通公网 HTTPS 请求。旧 Front 已停机，仍缓存旧 ALB 的客户端在过渡期间可能收到 502。
+1. 继续观察旧 DNS 缓存自然过期。旧 Front 已停机，仍缓存旧 ALB 的客户端在过渡期间可能收到 502/504；公共 DNS 的新解析已通过正式域名验收。
 2. 核对正式域名的前端业务请求、Redis 消费者单实例及自然消息处理结果；不以健康接口 200 代替业务验收。真实短信、支付或资金操作不在本次诊断中主动触发。
 3. 核对 Front Pod 的真实公网调用出口和 SmsCore 受理记录；仅网络端口可达不代表短信送达。
 4. 观察至少一个关键消费周期，记录错误、重启及重复消费情况。
 
 ## 已识别的发布问题与回滚
 
-- 本次 ACR 手工构建把原标签模板 `acs-${GIT_COMMIT_ID:6}` 展开成 `acs-`，随后创建 `acs-60686db` 同 digest 别名；部署使用 digest，不受标签名影响。后续发布前应修正或替换标签模板，并再次核验构建 SHA 与 digest。
+- 本次 ACR 手工构建把原标签模板 `acs-${GIT_COMMIT_ID:6}` 展开成 `acs-`，随后创建 `acs-60686db` 同 digest 别名；部署使用 digest，不受标签名影响。阿里云[构建规则说明](https://help.aliyun.com/zh/acr/user-guide/build-multi-schema-container-images)注明 Commit ID 标签参数仅支持自动构建、不支持手动立即构建。后续手动构建必须按实际 digest 发布，并显式创建及核验 SHA 别名；不要把自动构建用的标签模板直接当作手工构建的稳定版本号。
 - DNS 尚由旧 ALB 管理时，旧 Front 停机至域名切换期间存在入口空窗。若新服务验收失败，先将 ACS Front 缩至 0 并确认 Pod 退出，再在 ECS `systemctl enable --now jifen90.api.service`，核对原域名健康；若 DNS 已切换，还需由域名持有人切回旧 ALB。
 - 回退业务镜像时保留当前 Pod 网络选址，避免历史 ReplicaSet 带回旧网段。
