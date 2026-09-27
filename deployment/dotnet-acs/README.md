@@ -6,7 +6,7 @@
 
 ## 范围
 
-本轮范围是新零售、积分商城、售后工单、AI 自习室和经销商查询，设计共 8 个 API Deployment、4 个 Worker；经销商的前后台接口由同一个 `agent-query-api` 承载。积分商城 FrontApi、以旧换新和 SmsCore 规划保留 ECS。**2026-09-27 主公确认 AI FrontApi 已下线，不再列为待恢复或迁移对象**；其旧 ECS 在当天 08:32 读回为 Stopped。最近一次 ACS 读回为 **7 个 API、4 个 Worker**，积分 Front 未创建；售后 Worker 已在后续变更中启动。Worker 的唯一执行还须靠旧服务退出确认和业务幂等，不能只靠单副本。每项发布后至少观察 24 小时并覆盖关键任务周期，尚未取得完整观察证据。
+本轮范围是新零售、积分商城、售后工单、AI 自习室和经销商查询；经销商的前后台接口由同一个 `agent-query-api` 承载。以旧换新和 SmsCore 保留 ECS。**2026-09-27 主公确认 AI FrontApi 已下线，不再列为待恢复或迁移对象**；其旧 ECS 在当天 08:32 读回为 Stopped。积分商城 FrontApi 于 2026-09-27 从旧 ECS 交接至 ACS，构建、Secret、单副本和 ALB/DNS 证据见[专项迁移记录](points-mall-front-migration-2026-09-27.md)；业务观察仍待完成。Worker 的唯一执行还须靠旧服务退出确认和业务幂等，不能只靠单副本。每项发布后至少观察 24 小时并覆盖关键任务周期，尚未取得完整观察证据。
 
 接手先看 [部署复盘与风险清单](production-review-2026-09-27.md)、[09:02 接手复验与工程师后续任务](acceptance-review-2026-09-27.md)和 [阿里云 API 使用说明](aliyun-api-operations.md)。当前委托范围和执行门槛见[ALB、Worker、旧网段出口与告警任务书](ops-delegation-alb-worker-egress-alerts-2026-09-27.md)。日常运维执行入口见[运维值班手册](ops-playbook-2026-09-27.md)（每日/每周/每月巡检、变更 SOP、故障速查、遗留项清单）。逐项目版本与验收见 [发布记录](release-records.md)，外呼见 [公共出口核对表](external-dependencies.md)，网络实操与证据见 [NAT 执行手册](egress-nat.md)、[实施记录](egress-nat-execution-2026-09-26.md)，发布与故障见 [发布手册](runbook.md)、[运维备忘录](operations.md)。[交接快照](HANDOVER-2026-09-26.md)与[资源清单](inventory.md)保留历史参数，不能代替当前读回。这些文件不包含凭据、配置值和客户数据。
 
