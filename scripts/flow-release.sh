@@ -71,7 +71,8 @@ require_pipeline() {
 }
 
 flow() {
-  aliyun devops "$@" --organizationId "$FLOW_ORG_ID" --endpoint "$FLOW_ENDPOINT"
+  aliyun devops "$@" --organizationId "$FLOW_ORG_ID" --endpoint "$FLOW_ENDPOINT" \
+    --profile "$FLOW_PROFILE" --region "$FLOW_REGION"
 }
 
 write_state() {
@@ -109,7 +110,7 @@ for stage in d["pipelineRun"]["stages"]:
     for job in stage["stageInfo"]["jobs"]:
         status = str(job.get("status", ""))
         if "WAIT" in status.upper() or "VALIDATE" in status.upper():
-            print(f"{job[\"id\"]} {status} {job[\"name\"]}")
+            print("{} {} {}".format(job["id"], status, job["name"]))
 ' "$resp")"
     if [ -n "$job_info" ]; then
       echo "WAITING_JOB $job_info"
@@ -254,7 +255,7 @@ if not runs:
     print("（该流水线还没有运行记录）")
 for r in runs:
     ts = datetime.fromtimestamp(r["createTime"] / 1000).strftime("%F %T")
-    print(f"run={r[\"pipelineRunId\"]} status={r[\"status\"]} trigger={r.get(\"triggerMode\",\"\")} time={ts}")
+    print("run={} status={} trigger={} time={}".format(r["pipelineRunId"], r["status"], r.get("triggerMode", ""), ts))
 ' "$resp"
   if [ -f "$FLOW_STATE_DIR/$FLOW_SERVICE.env" ]; then
     echo "--- 本地状态 ---"
@@ -270,6 +271,19 @@ cmd_apply() {
   local name content body resp
   name="$(grep -m1 '^# pipeline-name:' "$yaml_file" | sed 's/^# pipeline-name:[[:space:]]*//')"
   [ -n "$name" ] || fail "YAML 第一屏需包含 '# pipeline-name: <流水线名>'"
+  if python3 - "$yaml_file" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+for line in Path(sys.argv[1]).read_text().splitlines():
+    if re.search(r"<[^<>]+>", line.split("#", 1)[0]):
+        sys.exit(0)
+sys.exit(1)
+PY
+  then
+    fail "YAML 仍有待替换占位符，先完成服务连接和步骤配置后再 apply"
+  fi
   content="$(cat "$yaml_file")"
   body="$(python3 -c '
 import json, sys
