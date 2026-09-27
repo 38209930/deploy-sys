@@ -26,3 +26,9 @@
 - `resource-snapshot.sh` 修复后对 17 个运行容器各采两次、间隔 1 秒：CPU/limit 约 0.1%–1.7%；DDMP memory.current 550.2 MiB/1 GiB、v1 RSS 458.3 MiB；Yangu memory.current 559.6 MiB/2 GiB、RSS 464.6 MiB。`kubectl top` 同时读得售后 Worker 1m/160Mi，而脚本为约 157.9 MiB、0.3% CPU limit。两者采样时点、工作集与 cgroup usage 口径不同，不能要求数值完全相等。1 秒 CPU 窗口仅供脚本核验，不覆盖峰值。
 - 售后 Worker 近 6 小时日志末 150 行只出现四类 `Task4*`，不能据此确定注册总数；未取得注册清单、脱敏业务事件及外部结果，退款、短信、ERP 均待验收。
 - 三日 ALB 5XX 分时原始序列、NAT 同窗口原始数据、短信生效配置及 AI Front 用户影响本轮尚未取得；旧网段五项目的真实公网依赖仍待逐项取证。详见[验收整改记录](acceptance-remediation-2026-09-27.md)。
+
+### 2026-09-27 09:15 CST 验收补证
+
+- ALB `alb-olyb9enxszy3f42nnn` 的 09-26 00:00–09-27 00:00 CST、`https:443` CMS 60 秒序列独立复算：约 30322 请求、683 个 5XX，约 2.25%；11 时段 5XX 约 217（主要 500），15 时段约 190（主要 503）。原“2.1%”口径未复现，发布事件归因待时间戳和访问日志。详见[验收整改记录](acceptance-remediation-2026-09-27.md)。
+- 售后 Worker 源码注册 5 个 Job/5 个 Trigger，日志仅见 4 类；最近 09:15 短信补偿处理 0 条，工单及发货扫描任务层成功。镜像构建 SHA 与源码尚未对齐，业务结果未验收。
+- AI Front 规划域名 `rsst-front-api.svision100.com` 公共 DNS 为 NXDOMAIN，旧 ECS `Stopped`；实际用户影响待访问/回调记录。五个旧网段项目 Pod IP 已只读复核，真实公网依赖仍待取证。
