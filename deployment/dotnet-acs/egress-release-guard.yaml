@@ -1,0 +1,39 @@
+# 仅作为待授权的生产变更清单；未安装到 ACS。
+# 更新受管业务 Deployment 时，必须显式选定两个已有 NAT/SNAT 的 Pod vSwitch。
+# 不匹配 Pod、ReplicaSet 或子资源，避免现有旧网段 Pod 重建时被准入拒绝。
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ruishi-business-egress-vswitch
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+        scope: "Namespaced"
+  matchConditions:
+    - name: known-business-namespaces
+      expression: >-
+        request.namespace in ['agent-query', 'ai-study', 'ddmp-api', 'dgye-api',
+        'etbst-api', 'm1x-api', 'new-retail', 'points-mall', 'service-order',
+        'stopmp-api', 'vet-api', 'yangu-api']
+  validations:
+    - expression: >-
+        has(object.spec.template.metadata.annotations) &&
+        'network.alibabacloud.com/vswitch-ids' in object.spec.template.metadata.annotations &&
+        object.spec.template.metadata.annotations['network.alibabacloud.com/vswitch-ids'] ==
+        'vsw-2zevd832gq3313j6gv5sj,vsw-2zesy6off4gy39tqripzp'
+      message: >-
+        发布受管业务 Deployment 前，须显式指定两个已接入 NAT/SNAT 的 Pod vSwitch；
+        请先完成项目的私网、短信、第三方白名单和 Worker 交接验收。
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: ruishi-business-egress-vswitch
+spec:
+  policyName: ruishi-business-egress-vswitch
+  validationActions: ["Deny"]
