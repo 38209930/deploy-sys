@@ -1,10 +1,10 @@
 # 五项目发布记录
 
-状态：包含早期预部署记录；当前入口状态以“2026-09-26 正式域名接入核验”为准。只填资源 ID、版本和证据位置，不填配置值、密钥、手机号或客户数据。
+状态：本页是带时间边界的历史发布记录。入口和网络的最近一次只读核对见[2026-09-27 部署复盘](production-review-2026-09-27.md)；ACS 实时副本仍需重新读回。只填资源 ID、版本和证据位置，不填配置值、密钥、手机号或客户数据。
 
 ## 2026-09-26 正式域名接入核验
 
-当前 ACS 集群 `ruishi-prod-acs` 使用 ALB `alb-olyb9enxszy3f42nnn`。以下域名均有精确 Host 的 `alb` Ingress，DNS 指向该 ALB；从公网发起 HTTPS 请求，证书校验通过，`/health/ready` 返回 200。
+2026-09-26 发布核验时，ACS 集群 `ruishi-prod-acs` 使用 ALB `alb-olyb9enxszy3f42nnn`。下列九个 Host 于 2026-09-27 08:32 再次读回 ALB 规则并从公网核验 HTTPS `/health/ready` = 200；表中的 Deployment 副本仍是较早的历史快照。
 
 | 项目 | 正式域名 | Ingress / 后端 | 当前 Deployment |
 |---|---|---|---|
@@ -15,7 +15,7 @@
 | 新零售 Front / Back | `ns-front-api.svision100.com`、`ns-back-api.svision100.com` | `new-retail/new-retail-front-alb`、`new-retail/new-retail-back-alb` → 对应 Service:8080 | 各 1/1 Ready |
 | 经销商查询前后台 | `4l-api.svision100.com`、`rsqapi-ft.svision100.com`、`rsqapi-bk.svision100.com` | `agent-query/agent-query-api-alb` → `agent-query-api:8080` | 1/1 Ready |
 
-售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；已按授权将生产短信路由改为仅启用私网 SmsCore，并恢复两个 Host 规则。AI 的 SmsCore 运行配置已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，已轮换并禁用旧凭据；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。七个当前 .NET API Host 的公网 HTTPS `/health/ready` 均在 23:39 核验返回 200；部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
+售后两个 Ingress 曾因短信旧通道仍启用而撤下，致使域名返回 503；当时已按授权修改短信路由并恢复两个 Host 规则。AI 的 SmsCore 运行配置当时已补齐。核验过程中 AI 专用短信凭据曾进入受控命令输出，发布记录称已轮换并禁用旧凭据，本次未重新取证；不在本记录保存凭据值。健康检查只证明入口及主要依赖就绪，真实短信与业务流程仍需单独验收。2026-09-26 23:39 曾核验七个 .NET API Host；随后加上两个 `rsqapi` Host，2026-09-27 08:32 已核验九个。部分 API 根路径 `/` 返回 404，不能据此判定域名未接入。
 
 AI 自习室 Back 初次仅验证了健康接口，后台前端实际调用时因生产配置缺少 `Security:CorsAllowedOrigins` 被浏览器拦截。实际生产后台来源为 `https://ai-study-admin.svision100.com`；已在 Deployment 运行环境中保留 `https://ai-study-biz.svision100.com`、`https://ai-study-h5.svision100.com`，并补入 `https://ai-study-admin.svision100.com`，完成滚动更新。该来源的预检返回 204，`POST /auth/login` 返回业务层响应且带正确 CORS 头；`/health/live`、`/health/ready`、`/back/public/info` 均返回 200。镜像 digest 未变更，当前 Back Pod 1/1 Ready、重启次数为 0。自习室后台与 `agent-admin.svision100.com` 分属不同前端和 API：自习室后台使用 `ai-study-admin.svision100.com` → `rsst-back-api.svision100.com`，经销商 PC 使用 `agent-admin.svision100.com` → `rsqapi-bk.svision100.com`；经销商 Origin 不加入自习室 CORS。前端实际业务不可用时，应继续用浏览器实际请求逐接口定位，不能根据构建包内遗留字符串推断线上调用关系。
 
@@ -37,7 +37,7 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 
 - 目标：`service-order` Namespace；`service-order-front` 1 CPU/2 GiB、`service-order-back` 0.5 CPU/1 GiB、`service-order-worker` 1 CPU/2 GiB；旧 ECS `i-2ze710cj1qpe7s7zv5sq`。
 - Host：`rsod-front-api.svision100.com`、`rsod-back-api.svision100.com`。当前接入与验收结果见本页顶部；旧 DNS 为 `101.201.60.62`。
-- 源码与构建历史：`/Volumes/SSD/work/mall/售后工单系统/service-order-api`；ACS 适配分支 `deploy/dotnet-acs-service-order` 已推送 `fb36c8a`，交接说明在 `Doc/release/ACS容器部署适配说明.md`。当前 ACS 镜像 digest：FrontApi `sha256:5edd69db104686332b4e0a4e4ea34919947ed32aee92f2b9d8d29ed33431333f`，BackApi `sha256:ccf049c83812407104680ae822c24b03186b8f0d699f0bf9ed55425078497f16`，Worker `sha256:a80e8b0eab68dc478db3ad417013379034e1eb9c2d10d9340687a88e13187474`；Front/Back 为 1/1 Ready，Worker 为 0 副本。远端 `release` 基线、Secret/结构版本、Worker 启动条件和业务验收仍需补齐。
+- 源码与构建历史：`/Volumes/SSD/work/mall/售后工单系统/service-order-api`；ACS 适配分支 `deploy/dotnet-acs-service-order` 已推送 `fb36c8a`，交接说明在 `Doc/release/ACS容器部署适配说明.md`。发布时镜像 digest：FrontApi `sha256:5edd69db104686332b4e0a4e4ea34919947ed32aee92f2b9d8d29ed33431333f`，BackApi `sha256:ccf049c83812407104680ae822c24b03186b8f0d699f0bf9ed55425078497f16`，Worker `sha256:a80e8b0eab68dc478db3ad417013379034e1eb9c2d10d9340687a88e13187474`；当时 Front/Back 为 1/1 Ready、Worker 为 0。**Worker 已于 2026-09-27 00:21 启动为 1/1**，见[变更记录](worker-start-and-java-egress-2026-09-27.md)；本次未重新读回 ACS 副本。远端 `release` 基线、Secret/结构版本和业务验收仍需补齐。
 - 切换关键点：工单创建/流转、ERP 同步、发货与退款状态、聚水潭 token、任务游标和 Redis 锁、短信业务事件幂等；旧 Worker 首次停机和队列核验：待验证。Front/Admin 当前 Kestrel 端口为 **3080/3081**，与本轮统一容器端口 8080 不同；若沿用 8080，应显式覆盖 `Kestrel__EndPoints__Http__Url` 并实测探针与 Service，不能只设置 `ASPNETCORE_URLS`。Worker 无 HTTP；Redis 任务锁为固定 TTL，不能单靠锁保证跨副本独占。短信及 ERP 幂等所需唯一索引须只读核对。构建产物包含被代码会话标为非敏感的 `appsettings.Production.json`，发布前仍需检查镜像没有真实生产连接与密钥，敏感值全部由外部注入。
 - 生产授权、外呼白名单、真实业务回调、24 小时观察及回滚证据：待验证。
 
@@ -55,7 +55,7 @@ ACR `ruishi-dotnet-prod` 下本页所列 13 个私有仓库已通过 API 创建�
 - 新 Host：`ns-front-api.svision100.com`、`ns-back-api.svision100.com`。已创建各自精确 Host 的 `new-retail-front-alb`、`new-retail-back-alb`，使用现有 ALB 的 HTTPS 443、ClusterIP Service 8080；两域名直接连接 ALB 时 `/health/live`、`/health/ready` 均返回 200，TLS 校验通过。
 - 源码：`/Volumes/SSD/work/mall/新零售/newsale-api`；分支 `deploy/dotnet-acs-new-retail` 冻结提交 `5ad04591a4701164d9d4b0dcd1d64e011051abb4`，业务基线为 `product/new-retail`，不可误用同远端积分商城的 `release`。ACR 分别使用仓库根目录的 `Dockerfile.frontapi`、`Dockerfile.backapi`、`Dockerfile.worker`，`linux/amd64`，无 `PROJECT` 构建参数。三个构建记录依次为 `01A0DCBD-9EDC-5B77-A49E-538F78D51E29`、`01A0DCC3-49E9-53C3-8DDE-DB2A45746ED7`、`01A0DCC3-4C01-5DFE-88AF-7583B7872294`，均成功且日志确认提交及 Dockerfile。
 - 生产镜像摘要：FrontApi `sha256:552035b32f766fefa0e68682dace4637c046d5aa229e1b127bb35431b15a315b`；BackApi `sha256:a3d4eff38a1e9cea5fd1673b1ae9ff6aea146a1722bfd3417357453c3df27268`；Worker `sha256:b78eb8691895073dba8ac9cdb98e0a94b5ff446da7526d45ac6a3ba2efb6a3ab`。Front、Back 分别挂载专用运行 Secret；Worker 挂载 Back 的运行 Secret 至所需配置文件路径，停机宽限 130 秒。旧 ECS 停机后已启用 Front 的 Redis 消费者；Back 数据库结构就绪检查保持启用，探针超时 25 秒。三个 Pod 均无重启；Worker 启动日志无错误，但尚无任务执行结果证据。
-- 出口与业务验收：当前 VPC 无公网 NAT，Front 和 Worker 到微信支付 `api.mch.weixin.qq.com:443` 均超时，到私网 SmsCore `172.27.182.18:3090` 可达。用户指定公网 NAT 和固定 EIP 在另一个任务中处理，本次只完成新零售部署与入口接入。因此登录、下单、支付回调、退款、短信真实投递、第三方白名单、Worker 任务结果及 24 小时观察均待验收；不得将 HTTP 200 的健康检查当作业务通过。
+- 当时的出口与业务验收：新零售首次发布时尚无公网 NAT，Front 和 Worker 到微信支付 `api.mch.weixin.qq.com:443` 均超时，到私网 SmsCore `172.27.182.18:3090` 可达。**后来 NAT/EIP 已建，但新零售历史 Pod 仍在无 SNAT 的旧网段；本次未读回实时选址，不能据此认为支付已恢复。** 登录、下单、支付回调、退款、短信真实投递、第三方白名单、Worker 任务结果及 24 小时观察仍待验收；不得将 HTTP 200 的健康检查当作业务通过。
 
 ## 经销商查询（第五项）
 

@@ -1,6 +1,6 @@
 # ACS 公共公网出口：执行手册与当前门槛
 
-状态：**跨可用区 NAT、固定 EIP、旧业务路由隔离和两个新 Pod vSwitch 的稳定 SNAT 已创建并完成网络验收；部分 .NET 业务 Pod 已明确落到新网段，Java Pod 仍在旧网段。项目真实 SDK 与业务结果仍须逐项验收。** 更新：2026-09-26 23:39。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。当前运行位置见[交接快照](HANDOVER-2026-09-26.md)，创建时的资源和证据见[网络实施记录](egress-nat-execution-2026-09-26.md)，准备及回滚细节见[生产网络变更单](egress-nat-change-order.md)和[网段记录](network-constraints-2026-09-26.md)。
+状态：**跨可用区 NAT、固定 EIP、旧业务路由隔离和两个新 Pod vSwitch 的稳定 SNAT 已创建并完成网络验收；部分 .NET 业务和 Yangu/M1X 已有角色迁入新网段。项目真实 SDK 与业务结果仍须逐项验收。** 更新：2026-09-27 08:32。本手册取代原单机 Squid 代理方案。业务代码适配在各项目独立会话完成。网络与入口最新只读状态及 ACS 访问限制见[部署复盘](production-review-2026-09-27.md)，历史运行位置见[交接快照](HANDOVER-2026-09-26.md)，创建时的资源和证据见[网络实施记录](egress-nat-execution-2026-09-26.md)，准备及回滚细节见[生产网络变更单](egress-nat-change-order.md)和[网段记录](network-constraints-2026-09-26.md)。
 
 ## 1. 固定架构与边界
 
@@ -51,8 +51,8 @@ NAT 是网络层出口，不要求 Java 和 .NET SDK 统一使用 HTTP 代理；
 1. **已完成：**MongoDB 新网段回程、白名单及双区 TCP 检查；实时报价、路由内容对比；七个旧 vSwitch 逐个迁入旧业务表。本机 OpenVPN 仅在需要直连新 Pod 时另行调整。
 2. **已完成：**创建隔离的新 Pod/NAT vSwitch、跨可用区增强型公网 NAT（`EipBindMode=NAT`）、单一 EIP；系统表默认路由只作用于 NAT 专用 vSwitch，出口表默认路由只作用于两个新 Pod vSwitch。
 3. **已完成：**ACS 默认旧 k/i 选址护栏、新 k/i 诊断 Pod 临时 `/32` 测试和重建、两个新 vSwitch 的稳定 SNAT；临时条目与诊断 Pod 均已清理。两区私网和固定 EIP 验证见[实施记录](egress-nat-execution-2026-09-26.md)。
-4. **后续待执行：**Java 项目按项目级业务门槛逐项显式迁入新 vSwitch。DGYE、VET 当前为零副本；Yangu、M1X 正有用户使用，迁移窗口和回滚须单独安排。每次验收真实 SDK外呼、私网、ALB、SmsCore 和任务状态；M1X 双角色分别核对。
-5. **已有进度：**AI、售后、积分的部分 Pod 已落新网段；新零售和经销商当前仍在旧网段。原计划的 AI → 售后 → 积分 → 新零售 → 经销商是历史顺序，不能据此推定所有角色已完成迁移。业务验收及剩余角色接入按[交接快照](HANDOVER-2026-09-26.md)与[发布手册](runbook.md)逐项完成。
+4. **局部已完成、业务待验收：**Yangu API、M1X API/Worker 于 2026-09-27 00:30 迁入新网段；M1X API 的固定 EIP 与 Yangu MongoDB 连接已有记录，真实 SDK 外呼及 M1X Worker 结果未形成完整证据。其余 Java 项目按项目级门槛逐项安排，DGYE、VET 在历史快照中为零副本。每次验收真实 SDK 外呼、私网、ALB、SmsCore 和任务状态。
+5. **已有进度：**AI、售后、积分的部分 Pod 已落新网段；新零售和经销商在最近一次 ACS 快照中仍在旧网段。原计划的 AI → 售后 → 积分 → 新零售 → 经销商是历史顺序，不能据此推定所有角色已完成迁移。最新 Pod 位置需恢复 ACS 私网 API 后重新读回；业务验收及剩余角色接入按[部署复盘](production-review-2026-09-27.md)与[发布手册](runbook.md)逐项完成。
 
 ## 5. 跨语言外呼及业务验收
 

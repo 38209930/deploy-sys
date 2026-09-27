@@ -14,7 +14,7 @@
 | 操作 | `kubectl scale --replicas=1`（00:21 CST） |
 | 变更后 | Pod `service-order-worker-5fd6788b99-t972c`，IP `172.31.240.149`（新 SNAT 网段），1/1 Running、重启 0 |
 
-启动日志证据：`ServiceOrder.Worker starting up...` 后，5 个 Quartz 任务按周期正常 start/completed 且无错误——`Task4ServiceOrderFactoryShipper`、`Task4SmsRetryCompensation`、`Task4ServiceOrderRefund`、`Task4ErpSyncCompensation`（单次耗时 18ms–2.7s）。回滚入口：`kubectl scale deploy service-order-worker -n service-order --replicas=0`。
+启动日志证据：`ServiceOrder.Worker starting up...` 后，记录了下列四类 Quartz 任务按周期 start/completed 且无错误——`Task4ServiceOrderFactoryShipper`、`Task4SmsRetryCompensation`、`Task4ServiceOrderRefund`、`Task4ErpSyncCompensation`（单次耗时 18ms–2.7s）。这些日志不等于实际业务结果已验收。回滚入口：`kubectl scale deploy service-order-worker -n service-order --replicas=0`。
 
 ## 任务二：Yangu、M1X 迁入新公网出口
 
@@ -34,6 +34,6 @@
 
 ## 残留风险与待办
 
-1. 短信路由：管理员确认所有项目短信统一走 SmsCore（Pod → 私网 `172.27.182.18:3090`），不存在直连供应商通道；Yangu/M1X 的短信路径不因本次迁移改变，供应商白名单无需新增新 EIP。原"旧短信直连通道待核实"一项就此关闭。
+1. 短信路由：管理员确认业务意图为所有项目统一走 SmsCore（Pod → 私网 `172.27.182.18:3090`）。本次变更没有逐项目读回生效通道、模板和发送回执，因此“旧直连供应商通道均已禁用”仍待取证；Yangu/M1X 的短信路径设计不因本次网段迁移改变，不能仅凭此记录判定供应商实际出口白名单无须核对。
 2. 售后 Worker 的真实业务结果（工单流转、ERP 同步、退款、短信）与 24 小时观察仍需业务侧确认。
 3. 其余 Java 项目（DGYE/VET 零副本，STOPMP/ETBST/DDMP 旧网段 1/1）未在本次授权范围，未改动。

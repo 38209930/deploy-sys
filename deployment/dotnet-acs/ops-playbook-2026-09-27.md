@@ -1,6 +1,6 @@
 # 北京 ACS 生产运维值班手册
 
-状态：**2026-09-27 起由接手运维（AI 会话 + 服务器管理员复核）负责本环境日常运维。** 本手册是值班执行的唯一入口：每天按它巡检，每次变更按它的 SOP 走，每个遗留项按它的清单推进。基础规则见[运维备忘录](operations.md)、[发布手册](runbook.md)、[出口手册](egress-nat.md)；本页不重复其细节，只做执行层汇总。所有内容不含凭据、配置值和客户数据。
+状态：本手册供实际值班人员按需执行，**不代表已建立自动巡检、后台常驻 AI 值班或 24×7 告警**。先阅读[2026-09-27 只读复盘](production-review-2026-09-27.md)的证据边界；下列工作负载表是 00:30 的历史基线，本次 08:32 未能读回 ACS 实时状态。基础规则见[运维备忘录](operations.md)、[发布手册](runbook.md)、[出口手册](egress-nat.md)。所有内容不含凭据、配置值和客户数据。
 
 ## 1. 环境基线（速查）
 
@@ -16,7 +16,7 @@
 | 路由表 | 旧业务 `vtb-2ze9057j04btdfr3bofhy`（**无默认路由**）；NAT 系统表 `vtb-2zebvv47akvfr0cq15njq`；新出口表 `vtb-2zedknif7nxu7z397b4o6`（有 `0.0.0.0/0`） |
 | 新出口 Pod vSwitch | 北京 k `vsw-2zevd832gq3313j6gv5sj`（`172.31.240.0/24`）；北京 i `vsw-2zesy6off4gy39tqripzp`（`172.28.64.0/24`）；选址注解 `network.alibabacloud.com/vswitch-ids` |
 | 旧 Pod vSwitch | `vsw-2zeagdbk8hizkkdw0ns42`（k）、`vsw-2zec5qkbaiafqu3pyuamo`（i）；**无公网出口** |
-| 短信 | 统一 Pod → 私网 SmsCore `172.27.182.18:3090`（ECS `i-2ze38hdx1sufodad2kz0`）；SmsCore 供应商出口是它自己的 `39.107.141.33`，与新 EIP 无关 |
+| 短信 | 设计路径为 Pod → 私网 SmsCore `172.27.182.18:3090`（ECS `i-2ze38hdx1sufodad2kz0`）；该 ECS 公网 IP 为 `39.107.141.33`，供应商实际看到的出口 IP 待核对；项目生效短信路由仍需逐项取证 |
 
 ### 工作负载基线（2026-09-27 00:30 起的期望状态）
 
@@ -25,9 +25,9 @@
 | 新网段 `172.31.240.x` | ai-study back/worker；service-order front/back/**worker**；points-mall back/worker；yangu-api；m1x-api；m1x-worker | 各 1/1、Running、重启 0 |
 | 旧网段 `172.31.239.x` 等 | stopmp-api；etbst-api；ddmp-api；new-retail front/back/worker；agent-query-api | 各 1/1；**当前无公网出口**（见 §5 待办 4） |
 | 零副本 | dgye-api、vet-api | 保持 0，Ingress 存在不代表可服务 |
-| 旧 ECS | `api-自习室`、`售后工单` 已由管理员主动停机；`积分商城` ECS 继续承载旧 FrontApi（含 Redis 消费者）；SmsCore、website、以旧换新等 ECS 运行 | 不擅自开机/停机 |
+| 旧 ECS | 2026-09-27 08:32 OpenAPI 读回：AI、售后 ECS `Stopped`，积分 ECS 和 SmsCore ECS `Running`；积分 FrontApi 及 Redis 消费者的进程状态、website/以旧换新 ECS 均未在本次复核中验证 | 不擅自开机/停机；运行中的 ECS 不等于应用服务已启动 |
 
-正式域名健康基线：`.NET` 七个 Host（rsst-back、rsod-front、rsod-back、rsjf-back、ns-front、ns-back、4l-api）`/health/ready` = **200**；Java 五个 Host（stop-mp、et-bst、ddmpapi、rsapi、m1x-api）= **401**（健康端点需认证，401 是正常值）。探测必须用真实域名直连——用 ALB 域名加 Host 头会因 SNI 不匹配被重置，返回 000，不是故障。
+2026-09-27 08:32 入口基线：`.NET` 九个 Host（`rsst-back-api`、`rsod-front-api`、`rsod-back-api`、`rsjf-back-api`、`ns-front-api`、`ns-back-api`、`4l-api`、`rsqapi-ft`、`rsqapi-bk`，均加 `.svision100.com`）的 `/health/ready` = **200**。Java 的 `stop-mp-api`、`et-bst-api`、`ddmpapi`、`rsapi`、`m1x-api` 曾以 **401** 作为需认证的健康端点基线，巡检时重新核对。探测须使用真实域名和正确 SNI；仅给 ALB 域名加 Host 头的 TLS 失败不足以判断业务故障。
 
 ## 2. 每日巡检（约 5–10 分钟，只读）
 
@@ -36,7 +36,7 @@
 1. **身份**：`sts GetCallerIdentity`，确认账号 `1442361567788059`（命令见[API 说明](aliyun-api-operations.md)）。
 2. **工作负载**：短时 kubeconfig（60 分钟、0600 权限、用完即删）读 `kubectl get pods -A -o wide`：对照 §1 基线核对副本、Running、重启数、Pod 网段。重启 > 0、非预期网段、Pod 年龄异常缩短都要查原因（先看事件，别只看状态）。
 3. **入口**：按 §1 域名清单逐个 `curl https://<真实域名>/health/ready`，核对 200/401 基线。
-4. **售后 Worker**：`kubectl logs deploy/service-order-worker -n service-order --since=24h`（脱敏过滤），确认四类任务有 start/completed 配对、无 error/exception；它承接工单发货、退款、短信补偿、ERP 同步，是当前唯一在跑的 .NET 生产 Worker，属于重点观察对象。
+4. **各项目 Worker**：先读回副本与 Pod，再按项目查看有界、脱敏日志及任务结果。售后 Worker 可用 `kubectl logs deploy/service-order-worker -n service-order --since=24h` 检查工单发货、退款、短信补偿、ERP 同步四类任务；AI、积分、新零售 Worker 也有运行历史，须分别核对，不能只巡检售后。
 5. **ECS 与短信路径**：`DescribeInstances` 确认 SmsCore、积分商城旧 ECS 等 Running；SmsCore 私网 3090 可由任一新网段 Pod `kubectl exec` TCP 探测（每周至少一次，见 §4）。
 
 巡检结果一句话记录到值班日志（日期 + 结论 + 异常项），连续无异常不展开。
@@ -64,7 +64,7 @@
 
 1. **售后 Worker 24 小时观察**（2026-09-27 启动）：观察期内每日巡检第 4 步必做；重点看首个真实到期任务的业务结果（发货/退款/短信补偿），由业务侧确认结果，运维只确认任务调度与无错误。
 2. **告警渠道未落实**：NAT/EIP/ALB/工作负载的告警接收渠道、通知人尚未核验——这是当前最大的盲区。优先与管理员确定接收方式（短信/钉钉/邮件），配置后做一次实测。
-3. **Yangu、M1X 重新启用用户前**：两项目已在新出口，但微信/支付/供应商白名单和真实 SDK 调用从未验收；启用前按[出口手册](egress-nat.md)第 3 节逐项补验，尤其确认供应商侧已把 `39.96.67.239` 加白（如需）。
+3. **Yangu、M1X 出口补验**：两项目有迁入新网段的历史记录，但微信/支付/供应商白名单和真实 SDK 调用尚无验收证据；按[出口手册](egress-nat.md)第 3 节逐项补验，尤其核对供应商侧是否要求把 `39.96.67.239` 加白。项目当前是否有用户，应由流量和业务记录确认。
 4. **旧网段项目无公网出口**：stopmp、etbst、ddmp、new-retail、agent-query 的 Pod 在旧网段，旧路由表无默认路由，**这些 Pod 现在出不了公网**。new-retail 此前已记录微信支付超时。若业务需要其公网能力，按项目门槛（短信通道、白名单、任务幂等）迁入新网段；不需要则维持现状。禁止用"加路由/SNAT"代替项目迁移。
 5. **积分商城 Front 迁移**：旧 Front 在 ECS 且启动了 Redis 消费者；迁移前必须单独评审重复消费与幂等（见[发布记录](release-records.md)积分商城节），不能套通用流程。
 6. **DGYE、VET 零副本**：与管理员确认是长期停用（考虑清理 Ingress 与镜像，省 ACR 存储）还是待部署。
@@ -101,6 +101,6 @@
 
 ## 9. 值班协作方式
 
-- **AI 运维（我）**：执行日常巡检、变更操作、文档与记录、问题定位与回滚；所有生产写操作按 §6 留痕。
+- **值班执行人**：按本手册实际触发只读巡检；生产变更按 §6 留痕。本文档本身不会自动安排巡检或告警。
 - **服务器管理员（您）**：授权与复核、业务验收结论、告警接收渠道、供应商/第三方账号侧动作（白名单、DNS 权限——当前 CLI 对 svision100.com 是 `IncorrectDomainUser`，DNS 切流必须由您或授权账号操作）。
 - **升级路径**：巡检异常 → 我定位并给出结论与建议 → 需要写操作时报管理员批准 → 执行并记录。资金类异常无论大小，处置后立即同步管理员。
