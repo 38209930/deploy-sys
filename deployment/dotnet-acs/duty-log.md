@@ -5,13 +5,13 @@
 ## 2026-09-27
 
 - 00:30 变更完成：售后 Worker 启动 1/1，Yangu/M1X 迁入新出口（详见 [worker-start-and-java-egress-2026-09-27.md](worker-start-and-java-egress-2026-09-27.md)）。
-- 上午巡检：ALB/NAT 云端指标正常；**本机 OpenVPN 未通**，kubectl 私网 API 不可达，Pod 级巡检推迟到隧道恢复。
+- 上午巡检：ALB/NAT 云端指标正常；**当时本机至 ACS 的路由未走 VPN**，kubectl 私网 API 不可达，Pod 级巡检推迟到隧道恢复。
 - 资源采样（17 个运行 Pod）：CPU 全部 < limit 2%；内存最高 ddmp-api 53%（RSS 44%），其余 ≤30%，均低于 80% 预警线，无需扩容。脚本 [resource-snapshot.sh](resource-snapshot.sh)。
 - 三日云端统计（09-24 21:00 – 09-27 10:30 CST）：
-  - ALB 443 总请求 ≈ 29k，其中 09-26 ≈ 28.4k（2XX 94.7%、4XX 3.2%、5XX 2.1%——当日为发布日，503 为已知 Ingress 撤下窗口）；09-25 ≈ 45（上线前）；09-27 半日 ≈ 686。QPS 峰值 1.77，最大并发连接 10.5，无 TLS 握手失败、无上游连接错误、无连接拒绝。
+  - ALB 443 总请求 ≈ 29k，其中 09-26 ≈ 28.4k（2XX 94.7%、4XX 3.2%、5XX 2.1%——当日为发布日，503 为已知 Ingress 撤下窗口）；09-25 ≈ 45（上线前）；09-27 半日 ≈ 686。QPS 峰值 1.77，最大并发连接 10.5，无 TLS 握手失败、无上游连接错误、无连接拒绝；以上为前次工程师统计，分时原始指标及 503 与发布窗口对应关系未独立复算。
   - NAT 出口（即固定 EIP）：峰值 < 0.01 Mbps（上限 10），无会话限制丢弃、无端口分配错误。NAT 自 09-26 21:29 CST 创建，之前无此数据。
-  - 结论：**全链路利用率极低，无任何资源需要扩容**；继续按周采样观察 ddmp-api 内存趋势。
-- 遗留：Pod 级三日重启计数因 VPN 断开未取（注：云监控无 ECI 指标、集群无 metrics-server，三日逐时 CPU/内存历史本身不可回溯，只能从现在起按周采样积累）。
+  - 结论：**该历史统计窗口内无即时扩容证据；未覆盖业务峰值及任务周期**；继续按周采样观察 ddmp-api 内存趋势。
+- 遗留：Pod 级三日重启计数因 VPN 断开未取（注：云监控无 ECI 指标、当时未核实 metrics-server，三日逐时 CPU/内存历史本身不可回溯，只能从现在起按周采样积累）。
 
 ### 2026-09-27 上午（VPN 恢复后补记）
 
@@ -19,3 +19,10 @@
 - 经管理员同意安装集群组件 `managed-metrics-server` v0.3.9.5（安装任务 `T-6ab8681c441e6701030032b3`，RequestId `01A0E056-ADF9-51CD-98A8-02668115CCDC`，08:50 完成）；`kubectl top pods -A` 验证可用，读数与 cgroup 采样吻合（ddmp 483Mi、yangu 486Mi）。该组件为托管形态，集群内不落业务 Pod。
 - 云监控 ECI 指标评估结论：**不启用**——该账号 CMS 无 ECI 命名空间指标，开启需逐实例注入，且 metrics-server 已覆盖需求，属重复建设。
 - 按管理员要求，`yangu-api` 与 `ddmp-api` 同列为内存趋势重点观察对象（2Gi 档，当前 24%，RSS 20%）。
+
+### 2026-09-27 09:07 CST 交接复验
+
+- 账号 `1442361567788059`、ACS `cebc88343a44b4d759aa983a47b787835`：STS 与 VPN 路由 `utun6` 读回；临时 kubeconfig 仅用于只读 Kubernetes API，已清理。
+- `resource-snapshot.sh` 修复后对 17 个运行容器各采两次、间隔 1 秒：CPU/limit 约 0.1%–1.7%；DDMP memory.current 550.2 MiB/1 GiB、v1 RSS 458.3 MiB；Yangu memory.current 559.6 MiB/2 GiB、RSS 464.6 MiB。`kubectl top` 同时读得售后 Worker 1m/160Mi，而脚本为约 157.9 MiB、0.3% CPU limit。两者采样时点、工作集与 cgroup usage 口径不同，不能要求数值完全相等。1 秒 CPU 窗口仅供脚本核验，不覆盖峰值。
+- 售后 Worker 近 6 小时日志末 150 行只出现四类 `Task4*`，不能据此确定注册总数；未取得注册清单、脱敏业务事件及外部结果，退款、短信、ERP 均待验收。
+- 三日 ALB 5XX 分时原始序列、NAT 同窗口原始数据、短信生效配置及 AI Front 用户影响本轮尚未取得；旧网段五项目的真实公网依赖仍待逐项取证。详见[验收整改记录](acceptance-remediation-2026-09-27.md)。

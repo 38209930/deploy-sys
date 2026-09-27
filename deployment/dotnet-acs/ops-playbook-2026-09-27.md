@@ -36,7 +36,7 @@
 1. **身份**：`sts GetCallerIdentity`，确认账号 `1442361567788059`（命令见[API 说明](aliyun-api-operations.md)）。
 2. **工作负载**：短时 kubeconfig（60 分钟、0600 权限、用完即删）读 `kubectl get pods -A -o wide`：对照 §1 基线核对副本、Running、重启数、Pod 网段。重启 > 0、非预期网段、Pod 年龄异常缩短都要查原因（先看事件，别只看状态）。
 3. **入口**：按 §1 域名清单逐个 `curl https://<真实域名>/health/ready`，核对 200/401 基线。
-4. **各项目 Worker**：先读回副本与 Pod，再按项目查看有界、脱敏日志及任务结果。售后 Worker 可用 `kubectl logs deploy/service-order-worker -n service-order --since=24h` 检查工单发货、退款、短信补偿、ERP 同步四类任务；AI、积分、新零售 Worker 也有运行历史，须分别核对，不能只巡检售后。
+4. **各项目 Worker**：先读回副本与 Pod，再按项目查看有界、脱敏日志及任务结果。售后 Worker 可用 `kubectl logs deploy/service-order-worker -n service-order --since=24h` 检查日志中已见的工单发货、退款、短信补偿、ERP 同步四类任务；准确注册总数需调度清单核对；AI、积分、新零售 Worker 也有运行历史，须分别核对，不能只巡检售后。
 5. **ECS 与短信路径**：`DescribeInstances` 确认 SmsCore、积分商城旧 ECS 等 Running；SmsCore 私网 3090 可由任一新网段 Pod `kubectl exec` TCP 探测（每周至少一次，见 §4）。
 
 巡检结果一句话记录到值班日志（日期 + 结论 + 异常项），连续无异常不展开。
@@ -56,7 +56,7 @@
 
 1. **证书**：核对 ALB 上两组域名的证书有效期（控制台或 API），到期前 30 天提交续期计划；续期先在新 ALB 指定 Host/SNI 验证再改正式入口。
 2. **配置与镜像版本对账**：读回各 Deployment 的镜像 digest，与[发布记录](release-records.md)比对，出现"文档外的镜像"即查明来源。
-3. **SmsCore 私网路径复测**：从新、旧网段各选一个 Pod，TCP 探测 `172.27.182.18:3090`；短信始终走私网，公网出口变更不影响它。
+3. **SmsCore 私网路径复测**：从新、旧网段各选一个 Pod，TCP 探测 `172.27.182.18:3090`；设计路径走私网；各项目生效路由及 SmsCore 受理结果需另核对。
 4. **数据库/Redis/Mongo 回程抽测**：参照[网段记录](network-constraints-2026-09-26.md)的目标清单做 TCP 连通抽测（只建连，不读数据）。
 5. **遗留项评审**：过一遍 §5 待办清单，推进或向管理员汇报。
 

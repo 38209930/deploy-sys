@@ -1,75 +1,63 @@
 #!/bin/sh
-# ACS 工作负载资源采样：两次读取容器 cgroup（v1/v2 自适应），间隔默认 60 秒，
-# 输出每个运行中 Pod 的内存用量/RSS、CPU 近似占用率，并与 limits 对照。
-# 用法：KUBECONFIG=<临时kubeconfig路径> sh resource-snapshot.sh [采样间隔秒，默认60]
-# 只读操作；不读取 Secret、不修改任何对象。
+# ACS 只读资源采样；KUBECONFIG 必须指向已授权的临时配置。
 set -eu
-
 INTERVAL="${1:-60}"
-[ -n "${KUBECONFIG:-}" ] || { echo "需要 KUBECONFIG 环境变量"; exit 1; }
-
-SNAP='if [ -f /sys/fs/cgroup/memory.current ]; then
-  cat /sys/fs/cgroup/memory.current /sys/fs/cgroup/cpu.stat 2>/dev/null
-elif [ -f /sys/fs/cgroup/memory/memory.usage_in_bytes ]; then
-  cat /sys/fs/cgroup/memory/memory.usage_in_bytes /sys/fs/cgroup/cpu/cpuacct.usage /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null
-  grep "^rss " /sys/fs/cgroup/memory/memory.stat 2>/dev/null
-fi'
-export SNAP
-
+case "$INTERVAL" in ''|*[!0-9]*) echo '间隔必须是非负整数秒' >&2; exit 1;; esac
+[ -n "${KUBECONFIG:-}" ] || { echo '需要 KUBECONFIG 环境变量' >&2; exit 1; }
+TMPDIR_ACS=$(mktemp -d "${TMPDIR:-/tmp}/acs-res.XXXXXXXX")
+trap 'rm -rf "$TMPDIR_ACS"' EXIT
+trap 'exit 1' HUP INT TERM
 sample() {
-  kubectl get pods -A -o json | SNAP="$SNAP" python3 -c '
-import json, os, subprocess, sys, time
-pods = []
+  kubectl get pods -A -o json | python3 -c '
+import json, subprocess, sys, time
 for p in json.load(sys.stdin)["items"]:
-    if p["status"].get("phase") != "Running":
-        continue
-    c = p["spec"]["containers"][0]
-    lim = c.get("resources", {}).get("limits", {})
-    pods.append((p["metadata"]["namespace"], p["metadata"]["name"],
-                 lim.get("cpu",""), lim.get("memory",""), time.time()))
-for ns, name, lcpu, lmem, ts in pods:
-    out = subprocess.run(["kubectl","exec","-n",ns,name,"--","sh","-c",os.environ["SNAP"]],
-                         capture_output=True, text=True)
-    vals = [x for x in out.stdout.split() if x.isdigit()]
-    print(json.dumps({"ns":ns,"pod":name,"ts":ts,"cpu":lcpu,"mem":lmem,"vals":vals}))
+    if p["status"].get("phase") != "Running": continue
+    for c in p["spec"]["containers"]:
+        ns, pod, container = p["metadata"]["namespace"], p["metadata"]["name"], c["name"]
+        lim = c.get("resources", {}).get("limits", {})
+        cmd = """if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+ echo v2; cat /sys/fs/cgroup/memory.current; grep ^usage_usec /sys/fs/cgroup/cpu.stat; grep ^anon /sys/fs/cgroup/memory.stat
+else
+ echo v1; cat /sys/fs/cgroup/memory/memory.usage_in_bytes; cat /sys/fs/cgroup/cpu/cpuacct.usage; grep ^rss /sys/fs/cgroup/memory/memory.stat
+fi"""
+        result = subprocess.run(["kubectl","exec","-n",ns,pod,"-c",container,"--","sh","-c",cmd],capture_output=True,text=True)
+        lines = result.stdout.splitlines()
+        try:
+            version = lines[0]
+            assert version in ("v1", "v2") and result.returncode == 0
+            mem = int(lines[1]); cpu = int(lines[2].split()[-1])
+            key, resident = lines[3].split()
+            assert key == ("anon" if version == "v2" else "rss")
+            resident = int(resident)
+        except (IndexError, ValueError, AssertionError):
+            print(f"采样失败: {ns}/{pod}/{container}", file=sys.stderr); sys.exit(1)
+        print(json.dumps(dict(ns=ns,pod=pod,container=container,ts=time.time(),cpu_limit=lim.get("cpu",""),mem_limit=lim.get("memory",""),version=version,mem=mem,cpu=cpu,resident=resident)))
 '
 }
-
-sample > /tmp/acs-res-s1.json
+sample > "$TMPDIR_ACS/first.jsonl"
 sleep "$INTERVAL"
-sample > /tmp/acs-res-s2.json
+sample > "$TMPDIR_ACS/second.jsonl"
+python3 - "$TMPDIR_ACS/first.jsonl" "$TMPDIR_ACS/second.jsonl" <<'PY'
+import json, sys
 
-python3 - <<'PY'
-import json
+def quantity(value):
+    if not value: return 0.0
+    for suffix, factor in [('Gi', 1<<30), ('Mi', 1<<20), ('Ki', 1<<10), ('G', 10**9), ('M', 10**6), ('K', 10**3), ('m', .001)]:
+        if value.endswith(suffix): return float(value[:-len(suffix)]) * factor
+    return float(value)
 
-def to_cores(c):
-    c = c or '0'
-    return float(c[:-1])/1000 if c.endswith('m') else float(c or 0)
-
-def to_bytes(m):
-    m = m or '0'
-    for suf, mult in (('Gi',1<<30),('Mi',1<<20),('Ki',1<<10)):
-        if m.endswith(suf): return float(m[:-2])*mult
-    return float(m or 0)
-
-s1 = {f"{x['ns']}/{x['pod']}": x for x in map(json.loads, open('/tmp/acs-res-s1.json'))}
-s2 = {f"{x['ns']}/{x['pod']}": x for x in map(json.loads, open('/tmp/acs-res-s2.json'))}
-print(f"{'namespace/pod':<42}{'limit':<12}{'mem使用':>9}{'mem占比':>8}{'RSS':>9}{'RSS占比':>8}{'CPU占比':>8}")
-for k, b in s2.items():
-    a = s1.get(k)
-    if not a or not b['vals']:
-        print(f"{k:<42}{b['cpu']+'/'+b['mem']:<12}{'-':>9}{'-':>8}{'-':>9}{'-':>8}{'-':>8}")
-        continue
-    mem_lim = to_bytes(b['mem'])
-    # cgroup v1: [usage, cpuacct, limit, rss]；v2: [memory.current, cpu.stat 首字段]
-    mem1, cpu1 = int(a['vals'][0]), int(a['vals'][1])
-    mem2, cpu2 = int(b['vals'][0]), int(b['vals'][1])
-    rss = int(b['vals'][3]) if len(b['vals']) >= 4 else None
-    dt = b['ts'] - a['ts']
-    cpu_pct = (cpu2-cpu1)/1e9/dt/to_cores(b['cpu'])*100 if dt > 0 else 0
-    mem_pct = mem2/mem_lim*100 if mem_lim else 0
-    rss_pct = rss/mem_lim*100 if rss and mem_lim else 0
-    print(f"{k:<42}{b['cpu']+'/'+b['mem']:<12}{mem2>>20:>8}M{mem_pct:>7.1f}%"
-          f"{(str(rss>>20)+'M') if rss else '-':>9}{rss_pct:>7.1f}%{cpu_pct:>7.1f}%")
+def read(path):
+    with open(path) as f:
+        return {(r['ns'], r['pod'], r['container']): r for r in map(json.loads, f)}
+first, second = read(sys.argv[1]), read(sys.argv[2])
+print(f"{'namespace/pod/container':<55} {'memory MiB':>11} {'mem %':>8} {'rss/anon MiB':>14} {'resident %':>11} {'cpu % limit':>12}")
+for key, b in second.items():
+    a = first.get(key)
+    if not a or a['version'] != b['version'] or b['ts'] <= a['ts'] or b['cpu'] < a['cpu']:
+        print('/'.join(key), '采样不连续'); continue
+    mem_limit = quantity(b['mem_limit']); cpu_limit = quantity(b['cpu_limit'])
+    elapsed = b['ts'] - a['ts']
+    cpu_seconds = (b['cpu'] - a['cpu']) / (1e6 if b['version'] == 'v2' else 1e9)
+    pct = lambda n, d: f'{n/d*100:.1f}' if d else '-'
+    print(f"{'/'.join(key):<55} {b['mem']/(1<<20):>11.1f} {pct(b['mem'],mem_limit):>8} {b['resident']/(1<<20):>14.1f} {pct(b['resident'],mem_limit):>11} {pct(cpu_seconds/elapsed,cpu_limit):>12}")
 PY
-rm -f /tmp/acs-res-s1.json /tmp/acs-res-s2.json
