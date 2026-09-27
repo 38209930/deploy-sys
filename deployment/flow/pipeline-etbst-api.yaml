@@ -9,7 +9,8 @@
 #   ACK 服务连接 fmayt57b9ttcjq61 已对 power-application-user 可见
 #   UIuvaR8vFrIjY4lj 是 Flow 注册后的集群 ID，不能填 ACK 服务连接 ID 或 ACS 集群 ID
 #
-# digest 从构建后 Docker RepoDigests 提取，经全局变量传到部署任务；需首次运行验证。
+# 公共构建机用临时 Dockerfile.flow 从同一 ACR 实例的公网域名拉取基础镜像。
+# 构建后由本地命令按本次 tag 向 ACR API 查询 digest，再启动独立的人工确认/部署流水线。
 
 sources:
   etbst_repo:
@@ -30,6 +31,15 @@ stages:
         name: etbst-api-镜像
         runsOn: public/cn-beijing
         steps:
+          prepare_public_dockerfile:
+            name: 为公网构建机准备Dockerfile
+            step: Command
+            with:
+              run: |
+                set -eu
+                test "$(grep -c 'ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com' Dockerfile)" -eq 2
+                sed 's#ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com#ruishi-prod-registry.cn-beijing.cr.aliyuncs.com#g' Dockerfile > Dockerfile.flow
+                test "$(grep -c 'ruishi-prod-registry.cn-beijing.cr.aliyuncs.com' Dockerfile.flow)" -eq 2
           acr_push:
             name: 构建镜像并推送ACR企业版
             step: ACREEDockerBuild   # 仓库根 Dockerfile 多阶段构建
@@ -41,59 +51,4 @@ stages:
               namespace: ruishi-java-prod
               dockerRegistry: etbst-api
               dockerTag: "${DATETIME}-${CI_COMMIT_ID}"   # Tag 不可变，禁止复用
-              dockerfilePath: Dockerfile
-          resolve_digest:
-            name: 提取并校验本次镜像digest
-            step: Command
-            with:
-              run: |
-                set -eu
-                image_tag='$[stages.build_stage.build_job.acr_push.artifacts.etbst_api_image.dockerUrl]'
-                digest_ref="$(docker image inspect --format '{{json .RepoDigests}}' "$image_tag" | python3 -c '
-                import json, sys
-                tag = sys.argv[1]
-                repo = tag.rsplit(":", 1)[0]
-                candidates = [x for x in json.load(sys.stdin) if x.startswith(repo + "@sha256:")]
-                if len(candidates) != 1 or len(candidates[0].split("@sha256:", 1)[1]) != 64:
-                    raise SystemExit("本次镜像没有唯一的 sha256 RepoDigest")
-                print(candidates[0])
-                ' "$image_tag")"
-                printf 'USER_IMAGE_DIGEST_REF=%s\n' "$digest_ref" >> "$FLOW_ENV"
-          publish_digest:
-            name: 传递固定digest
-            step: SetVariables
-            with:
-              key: IMAGE_DIGEST_REF
-              value: "${USER_IMAGE_DIGEST_REF}"
-
-  confirm_stage:
-    name: 人工确认
-    jobs:
-      confirm_job:
-        name: 上线前确认           # 本地 flow-release.sh deploy 通过该卡点
-        component: ManualValidate
-        with:
-          validatorType: users
-          validateMethod: and
-          validators:
-            - 203420990220401362
-
-  deploy_stage:
-    name: 部署ACS
-    jobs:
-      deploy_job:
-        name: 更新ACS镜像
-        runsOn: public/cn-beijing
-        steps:
-          k8s_set_image:
-            name: 固定digest更新Deployment
-            step: KubectlSetImage
-            with:
-              kubernetesCluster: UIuvaR8vFrIjY4lj
-              kubectlVersion: "1.27.9"
-              namespace: etbst-api
-              workloadKind: deployment
-              workload: etbst-api
-              container: etbst-api  # 仓库命名推断，首次上线前必须回读现网 Deployment 核对
-              # 首次上线前还需与 ACR API 及现网 Deployment 分别核对 digest、容器名。
-              artifact: "${IMAGE_DIGEST_REF}"
+              dockerfilePath: Dockerfile.flow

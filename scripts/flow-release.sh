@@ -5,8 +5,8 @@ set -euo pipefail
 #
 # 用法（环境变量参数化，仿 deploy-*-systemd.sh）：
 #   FLOW_PIPELINE_ID=12345 bash scripts/flow-release.sh push    # 推送本地 release 分支到 Codeup
-#   FLOW_PIPELINE_ID=12345 bash scripts/flow-release.sh build   # 触发流水线构建并等待结束（不推送）
-#   FLOW_PIPELINE_ID=12345 FLOW_CONFIRM=yes bash scripts/flow-release.sh deploy   # 通过人工卡点并等待部署结束
+#   FLOW_PIPELINE_ID=12345 FLOW_DEPLOY_PIPELINE_ID=67890 bash scripts/flow-release.sh build
+#   FLOW_DEPLOY_PIPELINE_ID=67890 FLOW_CONFIRM=yes bash scripts/flow-release.sh deploy
 #   FLOW_PIPELINE_ID=12345 bash scripts/flow-release.sh status  # 只读：最近运行状态
 #   bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml    # 按 YAML 创建/更新流水线
 #
@@ -28,6 +28,10 @@ FLOW_POLL_INTERVAL="${FLOW_POLL_INTERVAL:-15}"
 FLOW_STATE_DIR="${FLOW_STATE_DIR:-$FLOW_ROOT/data/flow-state}"
 FLOW_SERVICE="${FLOW_SERVICE:-service}"
 FLOW_REPO_DIR="${FLOW_REPO_DIR:-}"
+FLOW_DEPLOY_PIPELINE_ID="${FLOW_DEPLOY_PIPELINE_ID:-}"
+FLOW_ACR_INSTANCE_ID="${FLOW_ACR_INSTANCE_ID:-}"
+FLOW_ACR_REPO_ID="${FLOW_ACR_REPO_ID:-}"
+FLOW_IMAGE_REPO="${FLOW_IMAGE_REPO:-}"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -101,7 +105,7 @@ run_snapshot() {
   local overall
   overall="$(json_get "$resp" "d['pipelineRun']['status']")"
   echo "$overall"
-  if [ "$overall" = "RUNNING" ]; then
+  if [ "$overall" = "RUNNING" ] || [ "$overall" = "WAITING" ]; then
     # 找等待人工确认的 job（状态含 WAIT/VALIDATE）
     job_info="$(python3 -c '
 import json, sys
@@ -195,11 +199,74 @@ cmd_build() {
     exit 0
   fi
   [ "$rc" -eq 0 ] || exit "$rc"
-  write_state "last_run_id=$run_id" "last_status=SUCCESS"
+  if [ -z "$FLOW_DEPLOY_PIPELINE_ID" ]; then
+    write_state "last_run_id=$run_id" "last_status=BUILD_SUCCESS"
+    return
+  fi
+  [[ "$FLOW_DEPLOY_PIPELINE_ID" =~ ^[0-9]+$ ]] || fail "FLOW_DEPLOY_PIPELINE_ID 不是数字"
+  [ -n "$FLOW_ACR_INSTANCE_ID" ] && [ -n "$FLOW_ACR_REPO_ID" ] && [ -n "$FLOW_IMAGE_REPO" ] \
+    || fail "启动部署流水线需要 FLOW_ACR_INSTANCE_ID、FLOW_ACR_REPO_ID、FLOW_IMAGE_REPO"
+  local run_detail tags evidence source_commit tag digest image_ref deploy_params deploy_resp deploy_run_id
+  run_detail="$(flow GetPipelineRun --pipelineId "$FLOW_PIPELINE_ID" --pipelineRunId "$run_id")"
+  tags="$(aliyun cr list-repo-tag --instance-id "$FLOW_ACR_INSTANCE_ID" --repo-id "$FLOW_ACR_REPO_ID" \
+    --page-size 100 --page-no 1 --region "$FLOW_REGION" --profile "$FLOW_PROFILE")"
+  evidence="$(python3 - "$run_detail" "$tags" <<'PY'
+import json, re, sys
+run = json.loads(sys.argv[1])["pipelineRun"]
+images = json.loads(sys.argv[2]).get("Images") or []
+sources = run.get("sources") or []
+if len(sources) != 1 or sources[0].get("data", {}).get("branch") != "release":
+    raise SystemExit("构建源码不是唯一的 release 源")
+commits = json.loads(sources[0]["data"]["commint"])
+if len(commits) != 1:
+    raise SystemExit("无法确定唯一源码提交")
+commit = commits[0]["commitId"]
+if not re.fullmatch(r"[0-9a-f]{40}", commit):
+    raise SystemExit("源码提交格式无效")
+matches = [x for x in images if x.get("Tag", "").endswith("-" + commit[:8])
+           and x.get("ImageCreate", 0) >= run["createTime"]
+           and x.get("ImageCreate", 0) <= run["updateTime"] + 120000]
+if len(matches) != 1:
+    raise SystemExit(f"本次构建匹配的 ACR tag 数量为 {len(matches)}，拒绝启动部署")
+tag, digest = matches[0]["Tag"], matches[0]["Digest"]
+if not re.fullmatch(r"[0-9a-f]{64}", digest):
+    raise SystemExit("ACR digest 格式无效")
+print(commit, tag, digest)
+PY
+)" || fail "无法唯一关联本次构建与 ACR 镜像"
+  read -r source_commit tag digest <<<"$evidence"
+  resp="$(aliyun cr get-repo-tag --instance-id "$FLOW_ACR_INSTANCE_ID" --repo-id "$FLOW_ACR_REPO_ID" \
+    --tag "$tag" --region "$FLOW_REGION" --profile "$FLOW_PROFILE")"
+  [ "$(json_get "$resp" "d['Digest']")" = "$digest" ] \
+    && [ "$(json_get "$resp" "d['IsSuccess']")" = "True" ] \
+    && [ "$(json_get "$resp" "d['Status']")" = "NORMAL" ] \
+    || fail "ACR tag 回读失败、状态异常或 digest 不一致"
+  image_ref="$FLOW_IMAGE_REPO@sha256:$digest"
+  deploy_params="$(python3 - "$image_ref" "$source_commit" <<'PY'
+import json, sys
+print(json.dumps({"envs": {"IMAGE_DIGEST_REF": sys.argv[1], "SOURCE_COMMIT": sys.argv[2]}}))
+PY
+)"
+  deploy_resp="$(flow StartPipelineRun --pipelineId "$FLOW_DEPLOY_PIPELINE_ID" --params "$deploy_params")" \
+    || fail "镜像已构建，但启动部署流水线失败：tag=$tag digest=$digest"
+  deploy_run_id="$(json_get "$deploy_resp" "d['pipelineRunId']")"
+  [ -n "$deploy_run_id" ] || fail "未取得部署运行 ID"
+  echo "image_verified commit=$source_commit tag=$tag digest=$digest"
+  echo "deploy_triggered pipeline_id=$FLOW_DEPLOY_PIPELINE_ID run_id=$deploy_run_id"
+  local build_pipeline_id="$FLOW_PIPELINE_ID"
+  FLOW_PIPELINE_ID="$FLOW_DEPLOY_PIPELINE_ID"
+  rc=0
+  wait_run "$deploy_run_id" || rc=$?
+  [ "$rc" -eq 2 ] || fail "部署流水线未停在人工确认卡点（状态码 $rc），请检查运行 $deploy_run_id"
+  FLOW_PIPELINE_ID="$build_pipeline_id"
+  write_state "last_run_id=$run_id" "last_status=WAITING_CONFIRM" \
+    "deploy_pipeline_id=$FLOW_DEPLOY_PIPELINE_ID" "deploy_run_id=$deploy_run_id" \
+    "source_commit=$source_commit" "image_tag=$tag" "image_ref=$image_ref"
 }
 
 cmd_deploy() {
   check_identity
+  if [ -n "$FLOW_DEPLOY_PIPELINE_ID" ]; then FLOW_PIPELINE_ID="$FLOW_DEPLOY_PIPELINE_ID"; fi
   require_pipeline
   [ "${FLOW_CONFIRM:-no}" = "yes" ] || {
     echo "拒绝执行：deploy 会通过人工确认卡点并上线生产。"
@@ -209,9 +276,19 @@ cmd_deploy() {
   local run_id
   if [ -n "${FLOW_RUN_ID:-}" ]; then
     run_id="$FLOW_RUN_ID"
+  elif [ -f "$FLOW_STATE_DIR/$FLOW_SERVICE.env" ]; then
+    run_id="$(python3 - "$FLOW_STATE_DIR/$FLOW_SERVICE.env" "$FLOW_PIPELINE_ID" <<'PY'
+import sys
+data = dict(line.rstrip("\n").split("=", 1) for line in open(sys.argv[1]) if "=" in line)
+if data.get("deploy_pipeline_id") != sys.argv[2] or data.get("last_status") != "WAITING_CONFIRM":
+    raise SystemExit("本地状态没有对应的待确认部署运行")
+print(data["deploy_run_id"])
+PY
+)" || fail "本地状态与部署流水线不匹配，需显式指定 FLOW_RUN_ID"
   else
-    run_id="$(latest_running_run)" || fail "未找到等待确认的运行，可用 FLOW_RUN_ID 显式指定"
+    fail "没有本地待确认运行记录，需显式指定 FLOW_RUN_ID"
   fi
+  [[ "$run_id" =~ ^[0-9]+$ ]] || fail "FLOW_RUN_ID 不是数字"
   local snap waiting job_id
   snap="$(run_snapshot "$run_id")"
   waiting="$(printf '%s\n' "$snap" | grep '^WAITING_JOB ' | head -1 || true)"
@@ -224,20 +301,6 @@ cmd_deploy() {
   wait_run "$run_id" || rc=$?
   [ "$rc" -eq 0 ] || exit "$rc"
   write_state "last_run_id=$run_id" "last_status=DEPLOY_SUCCESS"
-}
-
-latest_running_run() {
-  local resp run_id status
-  resp="$(flow ListPipelineRuns --pipelineId "$FLOW_PIPELINE_ID" --maxResults 10)"
-  run_id="$(python3 -c '
-import json, sys
-d = json.loads(sys.argv[1])
-for r in d.get("pipelineRuns") or []:
-    if str(r.get("status", "")).upper() == "RUNNING":
-        print(r["pipelineRunId"]); break
-' "$resp")"
-  [ -n "$run_id" ] || return 1
-  echo "$run_id"
 }
 
 cmd_status() {
@@ -254,7 +317,7 @@ runs = d.get("pipelineRuns") or []
 if not runs:
     print("（该流水线还没有运行记录）")
 for r in runs:
-    ts = datetime.fromtimestamp(r["createTime"] / 1000).strftime("%F %T")
+    ts = datetime.fromtimestamp(r["startTime"] / 1000).strftime("%F %T")
     print("run={} status={} trigger={} time={}".format(r["pipelineRunId"], r["status"], r.get("triggerMode", ""), ts))
 ' "$resp"
   if [ -f "$FLOW_STATE_DIR/$FLOW_SERVICE.env" ]; then

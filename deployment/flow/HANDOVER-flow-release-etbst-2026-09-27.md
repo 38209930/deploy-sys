@@ -2,7 +2,7 @@
 
 日期：2026-09-27。操作仓库：deploy-sys，分支 `deploy/acs-acceptance-evidence`。运维细节以 [../flow-release-commands.md](../flow-release-commands.md) 为准，本篇是任务交接：目标、进度、待办、问题。
 
-**续进展（2026-09-27，以下原始交接进度以此为准）：** 已创建 ACK 服务连接 `fmayt57b9ttcjq61`，在 Flow 注册 `ruishi-prod-acs` 集群（Flow ID `UIuvaR8vFrIjY4lj`），并授予 `power-application-user` 使用权限。正式流水线 `5300352` 已由该 RAM 用户通过 `apply` 创建，`GetPipeline` 回读成功；本地私有 `config/projects.local.yaml` 已填入流水线 ID。尚未触发真实构建、人工确认或生产部署，Codeup 拉取、ACR 推送、digest 传递与 ACS 更新均待实际运行验收。截图中的 ID 易将大写 `I` 和小写 `l` 混淆，应使用本段复制的原文。
+**最新进展（2026-09-27，以下原始交接进度以此为准）：** 已建两条流水线：构建 `5300352`、固定 digest 上线 `5300396`，Flow 集群 ID `UIuvaR8vFrIjY4lj`。构建运行 `4` 整体成功，Codeup `release` Commit `1e09bf8147b5eba0d04ef4fe0333003e4ad887b2`，ACR tag `2026-09-27-18-40-20-1e09bf81`，Digest `325cefc75daa088d274c073873884a2a1e4fd15f81b9bc64f135e5a92e30526d` 已由 ACR API 回读。上线流水线运行 `2` 输入校验成功，正处于 `WAITING` 人工确认，**尚未更新 ACS**。上线前须只读核对目标 Deployment 的实际容器名和当前镜像，记录回滚目标；然后通过人工卡点并按 etbst 发布说明书验收。此次调试与网络白名单变更详见 [../flow-release-commands.md](../flow-release-commands.md)。下文早期交接清单保留历史背景，不代表当前待办。
 
 ## 一、任务目标
 
