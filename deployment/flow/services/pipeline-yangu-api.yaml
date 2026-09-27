@@ -1,0 +1,42 @@
+# pipeline-name: yangu-api-手动构建
+# 仅手动触发；push 不自动构建。
+sources:
+  source_repo:
+    type: codeup
+    name: yangu-api
+    endpoint: https://codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/yangu-api.git
+    branch: release
+    triggerEvents: []
+    certificate:
+      type: serviceConnection
+      serviceConnection: xdghn746erjk8hdo
+
+stages:
+  build_stage:
+    name: 构建并推送镜像
+    jobs:
+      build_job:
+        name: yangu-api-镜像
+        runsOn: public/cn-beijing
+        steps:
+          prepare_public_dockerfile:
+            name: 为公网构建机准备Dockerfile
+            step: Command
+            with:
+              run: |
+                set -eu
+                test "$(grep -c 'ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com' Dockerfile)" -eq 2
+                sed 's#ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com#ruishi-prod-registry.cn-beijing.cr.aliyuncs.com#g' Dockerfile > Dockerfile.flow
+                test "$(grep -c 'ruishi-prod-registry.cn-beijing.cr.aliyuncs.com' Dockerfile.flow)" -eq 2
+          acr_push:
+            name: 构建镜像并推送ACR企业版
+            step: ACREEDockerBuild
+            with:
+              serviceConnection: lhjkwns3zhj879ic
+              region: cn-beijing
+              artifact: yangu_api_image
+              instance: ruishi-prod
+              namespace: ruishi-java-prod
+              dockerRegistry: yangu-api
+              dockerTag: "${DATETIME}-${CI_COMMIT_ID}"
+              dockerfilePath: Dockerfile.flow

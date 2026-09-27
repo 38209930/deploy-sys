@@ -1,5 +1,5 @@
-# pipeline-name: etbst-api-固定digest上线
-# 仅由本地发布命令在 ACR API 核对本次构建 tag 的 digest 后启动。
+# pipeline-name: etbst-api-固定digest人工确认
+# 由本地发布命令在 ACR API 核对本次构建 tag 的 digest 后启动；确认后本机 kubectl 更新镜像。
 # IMAGE_DIGEST_REF 必须是目标 ACR 仓库的 VPC 域名及 sha256 摘要；运行时传入。
 
 variables:
@@ -37,22 +37,3 @@ stages:
           validateMethod: and
           validators:
             - 203420990220401362
-
-  deploy_stage:
-    name: 部署ACS
-    jobs:
-      deploy_job:
-        name: 更新ACS镜像
-        runsOn: public/cn-beijing
-        steps:
-          k8s_set_image:
-            name: 固定digest更新Deployment
-            step: KubectlSetImage
-            with:
-              kubernetesCluster: UIuvaR8vFrIjY4lj
-              kubectlVersion: "1.27.9"
-              namespace: etbst-api
-              workloadKind: deployment
-              workload: etbst-api
-              container: etbst-api
-              artifact: "${IMAGE_DIGEST_REF}"

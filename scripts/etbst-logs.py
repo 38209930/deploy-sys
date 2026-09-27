@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""只读查看 ETBST ACS 应用日志和 Kubernetes 告警事件。"""
+"""只读查看指定 ACS 服务的应用日志和 Kubernetes 告警事件。"""
 
 import argparse
 from datetime import datetime, timedelta, timezone
@@ -15,8 +15,6 @@ ACCOUNT = "1442361567788059"
 PROFILE = "ruishi-prod-acr"
 REGION = "cn-beijing"
 CLUSTER = "cebc88343a44b4d759aa983a47b787835"
-NAMESPACE = "etbst-api"
-DEPLOYMENT = "etbst-api"
 ERROR_PATTERN = re.compile(r"\b(ERROR|FATAL|Exception|Traceback|panic)\b|错误|异常", re.I)
 WARNING_PATTERN = re.compile(r"\b(WARN|WARNING)\b|告警|警告", re.I)
 
@@ -49,8 +47,14 @@ def event_time(item):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", nargs="?", default="all", choices=("all", "normal", "error", "warning", "events"))
+    parser.add_argument("--namespace", default="etbst-api")
+    parser.add_argument("--deployment", default="etbst-api")
+    parser.add_argument("--container", default="etbst-api")
     args = parser.parse_args()
     mode = args.mode
+    for value in (args.namespace, args.deployment, args.container):
+        if not re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", value):
+            raise RuntimeError("目标名称格式无效")
 
     identity = cloud("sts", "GetCallerIdentity")
     if str(identity.get("AccountId")) != ACCOUNT:
@@ -60,18 +64,23 @@ def main():
     if not response.get("config"):
         raise RuntimeError("ACS 未返回临时访问配置")
 
-    with tempfile.TemporaryDirectory(prefix="etbst-logs-") as directory:
+    with tempfile.TemporaryDirectory(prefix="acs-logs-") as directory:
         config = os.path.join(directory, "config")
         descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write(response["config"])
 
         def kubectl(*params):
-            return call("kubectl", "--kubeconfig", config, "-n", NAMESPACE, *params)
+            return call("kubectl", "--kubeconfig", config, "-n", args.namespace, *params)
 
         if mode != "events":
-            lines = kubectl("logs", f"deployment/{DEPLOYMENT}", "-c", DEPLOYMENT,
-                            "--since=30m", "--tail=200", "--limit-bytes=1048576", "--timestamps=true").splitlines()
+            deployment = json.loads(kubectl("get", "deployment", args.deployment, "-o", "json"))
+            if deployment["spec"].get("replicas", 1) == 0:
+                print("该服务当前为 0 副本，无 Pod 日志。")
+                lines = []
+            else:
+                lines = kubectl("logs", f"deployment/{args.deployment}", "-c", args.container,
+                                "--since=30m", "--tail=200", "--limit-bytes=1048576", "--timestamps=true").splitlines()
             if mode == "all":
                 groups = (("普通日志", lines[-100:]),
                           ("错误日志", [line for line in lines if ERROR_PATTERN.search(line)][-50:]),
@@ -92,7 +101,7 @@ def main():
                 involved = item.get("involvedObject", {})
                 name = involved.get("name", "")
                 stamp = event_time(item)
-                if not name.startswith(DEPLOYMENT) or stamp is None or stamp < cutoff:
+                if not name.startswith(args.deployment) or stamp is None or stamp < cutoff:
                     continue
                 selected.append(f"{stamp.isoformat()} {item.get('reason', '')}: {item.get('message', '')}")
             print("\nKubernetes 告警事件（最近 30 分钟，最多 50 条）：")

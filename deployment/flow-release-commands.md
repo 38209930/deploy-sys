@@ -1,13 +1,16 @@
 # 云效 Flow 发布命令（API/Worker → ACR/ACS）
 
+**现行方案（2026-09-27）：** ETBST 及后续 18 个服务的构建流水线仍手动触发；构建后核对唯一 tag/digest 并进入独立 Flow 人工确认流水线。确认通过后，使用本机 `kubectl 1.36.1` 和短时 ACS 访问配置只更新镜像。原 ETBST Flow `KubectlSetImage` 使用 `kubectl 1.27.9`，已从当前确认流水线移除。下方早期试点记录保留为历史；服务映射、流水线 ID 和现行菜单用法见[多项目发布清单](flow/multi-project-release.md)。
+
 状态：2026-09-27 更新。生产 api/worker 服务已迁入北京 ACS（镜像在 ACR），本地不再打包部署到单机 ECS；本篇记录 deploySys 的云效 Flow 远程发布命令与试点结果。试点项目 **etbst-api**。.NET 项目的 ACS 运维文档仍在 [dotnet-acs](dotnet-acs/) 目录。
 
 ## 架构与命令
 
 ```
-本地 deploySys ──▶ 构建流水线 5300352：Codeup release → Docker build → push ACR
+本地 deploySys ──▶ 构建流水线：Codeup 指定分支 → Docker build → push ACR
                └─▶ ACR API 回读唯一 tag 的 digest
-                    └─▶ 部署流水线 5300396：输入校验 → 人工确认 → 固定 digest 更新 ACS Deployment
+                    └─▶ 确认流水线：输入校验 → 人工确认
+                         └─▶ 本机 kubectl 1.36.1：固定 digest 更新 ACS Deployment 镜像
 ```
 
 - **不做 push 自动构建**：流水线手动触发。`build` 构建完成后核对镜像并启动部署流水线，停在人工确认；`deploy` 才通过卡点。
@@ -39,11 +42,11 @@
 
 注意：`ListServiceConnections` 查询 Codeup 时必须传 `--sericeConnectionType codeup`（小写）；CLI 帮助列出的 `Codeup`（大写）会返回空列表。此前由此造成的“连接未生效”判断已纠正。
 
-2026-09-27 通过 svision100 主账号的 CLI OAuth 配置 `svision100code` 执行单仓库授权：`power-application-user`（`accountId=203420990220401362`）在组织中状态为 `normal`、角色为“成员”，在 `ddmp/et-bst-api` 仓库中为活跃浏览者（20）。未授予其他仓库权限。
+2026-09-27 通过 svision100 主账号的 CLI OAuth 配置 `svision100code` 执行单仓库授权：`power-application-user`（`accountId=203420990220401362`）在组织中状态为 `normal`、角色为“成员”，在 `ddmp/et-bst-api` 仓库中为活跃浏览者（20）。此后又对本轮多项目目标的 10 个 Codeup 仓库逐库添加只读浏览权限（20），均回读为 active，详见[多项目发布清单](flow/multi-project-release.md)。
 
-流水线模板中的 `ACREEDockerBuild` 和 `KubectlSetImage` 已按[云效官方步骤清单](https://help.aliyun.com/zh/yunxiao/user-guide/step-steps-list)核对。本地脚本在成功运行的源码 Commit、ACR 镜像创建时间和 tag 后缀之间建立唯一关联，再以 `get-repo-tag` 回读 digest；匹配不唯一时拒绝启动部署。
+流水线模板中的 `ACREEDockerBuild` 已按[云效官方步骤清单](https://help.aliyun.com/zh/yunxiao/user-guide/step-steps-list)核对。试点阶段用过的 `KubectlSetImage` 已从现行流水线移除。本地脚本在成功运行的源码 Commit、ACR 镜像创建时间和 tag 后缀之间建立唯一关联，再以 `get-repo-tag` 回读 digest；匹配不唯一时拒绝启动确认流水线。
 
-目标 ACR 仓库 `ruishi-java-prod/etbst-api`，仓库 ID `crr-gkqkb2np05u435bf`；`get-repo-tag` 已验证本次新构建 tag 的 Digest。部署流水线变量 `IMAGE_DIGEST_REF` 使用 VPC 域名加 `@sha256:`；`SOURCE_COMMIT` 记录完整源码提交。首次 ACS 执行和 Pod 验收仍待完成。
+目标 ACR 仓库 `ruishi-java-prod/etbst-api`，仓库 ID `crr-gkqkb2np05u435bf`；`get-repo-tag` 已验证本次新构建 tag 的 Digest。部署流水线变量 `IMAGE_DIGEST_REF` 使用 VPC 域名加 `@sha256:`；`SOURCE_COMMIT` 记录完整源码提交。ETBST 首次 ACS 执行和 Pod 验收已完成，见上文验收记录。
 
 ## 控制台一次性授权清单（已完成，运行能力待验证）
 
@@ -64,7 +67,7 @@
 ```bash
 cd /Volumes/SSD/work/deploy-sys
 
-# 1. 推送本地 release 分支（要求工作区干净、本地为远端后代，可快进）
+# 1. 推送本地已提交的 release 分支（本地须为远端后代；未提交文件不会推送）
 FLOW_PIPELINE_ID=<ID> FLOW_REPO_DIR=/Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api \
   bash scripts/flow-release.sh push
 
@@ -72,11 +75,14 @@ FLOW_PIPELINE_ID=<ID> FLOW_REPO_DIR=/Volumes/SSD/work/ddmp/prod/stopmp/etbst/etb
 FLOW_PIPELINE_ID=5300352 FLOW_DEPLOY_PIPELINE_ID=5300396 \
 FLOW_ACR_INSTANCE_ID=cri-73ffxebpi6ruw6sn FLOW_ACR_REPO_ID=crr-gkqkb2np05u435bf \
 FLOW_IMAGE_REPO=ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api \
-FLOW_SERVICE=etbst-api bash scripts/flow-release.sh build
+FLOW_SERVICE=etbst-api FLOW_DEPLOY_MODE=local bash scripts/flow-release.sh build
 #    成功后核对 ACR digest、启动部署流水线并停在人工确认。
 
 # 3. 通过确认卡点上线（等价于在控制台点确认，必须显式 FLOW_CONFIRM=yes）
-FLOW_DEPLOY_PIPELINE_ID=5300396 FLOW_RUN_ID=<部署运行ID> FLOW_CONFIRM=yes \
+FLOW_DEPLOY_PIPELINE_ID=5300396 FLOW_SERVICE=etbst-api FLOW_DEPLOY_MODE=local \
+FLOW_ACR_INSTANCE_ID=cri-73ffxebpi6ruw6sn FLOW_ACR_REPO_ID=crr-gkqkb2np05u435bf \
+FLOW_IMAGE_REPO=ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api \
+FLOW_NAMESPACE=etbst-api FLOW_DEPLOYMENT=etbst-api FLOW_CONTAINER=etbst-api FLOW_EXPECTED_REPLICAS=1 FLOW_CONFIRM=yes \
   bash scripts/flow-release.sh deploy
 
 # 4. 只读状态（最近 5 次运行 + 本地状态文件 data/flow-state/<service>.env）
@@ -84,18 +90,18 @@ FLOW_PIPELINE_ID=5300396 FLOW_SERVICE=etbst-api bash scripts/flow-release.sh sta
 
 # 5. 创建/更新两条流水线
 FLOW_PIPELINE_ID=5300352 bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml
-FLOW_PIPELINE_ID=5300396 bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api-deploy.yaml
+FLOW_PIPELINE_ID=5300396 bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api-confirm.yaml
 ```
 
 **首次上线验收**按 [etbst 仓库内发布说明书](https://codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api)（分支 `docs/etbst-acs-release-handbook-20260926`，`Doc/deployment/etbst-api-acs-release-runbook.md`）执行：核对源 Commit 与镜像 digest、探针/日志/DNS/Host 验收、回滚目标记录。上线只更新镜像字段；Secret、资源规格、Ingress 变更仍走人工变更流程。
 
-## 复制到其他项目（模板）
+## 扩展到其他项目
 
-每个服务（api 或 worker）三步：
+本轮 18 个服务已完成配置，映射和流水线 ID 见[多项目发布清单](flow/multi-project-release.md)。后续新增服务按以下步骤：
 
-1. 复制构建及部署两份 YAML，改名称/仓库/分支/ACR 仓库/Deployment 名，分别 `apply` 创建流水线；
-2. `config/projects.local.yaml` 对应项目下新增 `api-flow-push/build/deploy` 服务条目，填构建及部署流水线 ID、ACR 实例/仓库 ID 与镜像仓库地址；
-3. 首次构建成功后按 runbook 验收，并在本文件登记：流水线 ID、首次发布日期、镜像 digest。
+1. 核对仓库、源分支、Dockerfile、ACR 仓库和 ACS Deployment，写入 `deployment/flow/services.yaml`；运行 `python3 scripts/generate-flow-pipelines.py` 生成构建及确认 YAML。
+2. 创建两条手动流水线，将 ID 写入 `deployment/flow/pipeline-ids.yaml`；运行 `python3 scripts/sync-flow-menus.py` 更新本机菜单。
+3. 首次构建和上线另行授权并按项目 runbook 验收；登记首次发布日期和镜像 digest。
 
 Java 服务（ACS 在用）：dgye-api、vet-api（0 副本）、stopmp-api、etbst-api、ddmp-api、yangu-api、m1x-api、m1x-worker。.NET 五项目仓库与角色见 [dotnet-acs/inventory.md](dotnet-acs/inventory.md)。
 
