@@ -228,11 +228,11 @@ cmd_deploy() {
 
 latest_running_run() {
   local resp run_id status
-  resp="$(flow ListPipelineRuns --pipelineId "$FLOW_PIPELINE_ID" --pageNumber 1 --pageSize 10)"
+  resp="$(flow ListPipelineRuns --pipelineId "$FLOW_PIPELINE_ID" --maxResults 10)"
   run_id="$(python3 -c '
 import json, sys
 d = json.loads(sys.argv[1])
-for r in d.get("pipelineRunList") or []:
+for r in d.get("pipelineRuns") or []:
     if str(r.get("status", "")).upper() == "RUNNING":
         print(r["pipelineRunId"]); break
 ' "$resp")"
@@ -245,12 +245,12 @@ cmd_status() {
   require_pipeline
   echo "pipeline_id=$FLOW_PIPELINE_ID url=$(pipeline_url)"
   local resp
-  resp="$(flow ListPipelineRuns --pipelineId "$FLOW_PIPELINE_ID" --pageNumber 1 --pageSize 5)"
+  resp="$(flow ListPipelineRuns --pipelineId "$FLOW_PIPELINE_ID" --maxResults 5)"
   python3 -c '
 import json, sys
 from datetime import datetime
 d = json.loads(sys.argv[1])
-runs = d.get("pipelineRunList") or []
+runs = d.get("pipelineRuns") or []
 if not runs:
     print("（该流水线还没有运行记录）")
 for r in runs:

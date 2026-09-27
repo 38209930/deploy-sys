@@ -21,15 +21,15 @@
 
 | 项 | 结论 |
 |---|---|
-| 云效组织 | `svision100的代码库`，org `659a5cefd64a2eb2dceb72f3`；`power-application-user` 已手动同步为普通成员，`ListJoinedOrganizations` 和 `ListPipelines` API 成功；当前无流水线 |
-| devops API | 先前在旧组织完成 CreatePipeline → StartPipelineRun → GetPipelineRun → DeletePipeline 冒烟；当前 svision100 组织的成员及只读 API 已验证，创建/运行尚待服务连接就绪 |
+| 云效组织 | `svision100的代码库`，org `659a5cefd64a2eb2dceb72f3`；`power-application-user` 已手动同步为普通成员，`ListJoinedOrganizations` 和 `ListPipelines` API 成功；正式流水线 `5300352` 已创建 |
+| devops API | 先前在旧组织完成 CreatePipeline → StartPipelineRun → GetPipelineRun → DeletePipeline 冒烟；当前 svision100 组织中 `power-application-user` 已创建并回读 etbst-api 正式流水线 `5300352`，尚未触发真实构建 |
 | 服务连接 | ACR `lhjkwns3zhj879ic`（API ID `943301`）、Codeup `xdghn746erjk8hdo`（API ID `580982`）、ACK `fmayt57b9ttcjq61`（API ID `943303`）均可由 `power-application-user` 通过 API 查询；实际拉取、推送和集群访问仍待流水线验证 |
 | etbst 仓库 | `/Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api`，origin `codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api.git`，`release` 分支在用，根目录 Dockerfile（多阶段 Maven 构建，适配容器部署） |
 | Codeup API | svision100 主账号确认目标仓库 ID `6424213`，并经 `AddRepositoryMember` 将 `power-application-user` 加为单仓库浏览者（20）；管理员成员列表与该 RAM 用户的 `ListRepositories` 均回读成功 |
 | ACR 直连 API | 同一 Profile 于 2026-09-27 复核 `GetInstance` 成功；此前 Unauthorized 不代表当前持续无权 |
 | ACS/CS API | 同一 Profile 于 2026-09-27 复核 `DescribeClusterUserKubeconfig` 成功（未读取或保存内容）；此前 `ErrorClusterNotFound` 不代表当前持续无权 |
 
-云效组织成员、目标代码仓库浏览权限及三个服务连接可见性已解决。`apply` 于 2026-09-27 返回：ACK 服务连接 `fmayt57b9ttcjq61`“不是Kubernetes集群”；Flow 还需在「全局设置 > Kubernetes 集群管理」注册目标 ACS/ACK 集群，取得 Flow 的集群 ID 并授予 `power-application-user` 使用权限。服务连接 ID、真实 ACS 集群 ID 与 Flow 注册集群 ID 是不同对象。
+云效组织成员、目标代码仓库浏览权限及三个服务连接可见性已解决。已在 Flow 注册目标集群 `ruishi-prod-acs`，集群 ID `UIuvaR8vFrIjY4lj`，`power-application-user` 为使用者。服务连接 ID、真实 ACS 集群 ID 与 Flow 注册集群 ID 是不同对象。2026-09-27 以该 ID 执行 `apply` 成功创建流水线 `5300352`，并通过 `GetPipeline` 回读 YAML；此前 OCR 将大写 `I`/小写 `l` 混淆导致的“不存在”报错已解决。
 
 注意：`ListServiceConnections` 查询 Codeup 时必须传 `--sericeConnectionType codeup`（小写）；CLI 帮助列出的 `Codeup`（大写）会返回空列表。此前由此造成的“连接未生效”判断已纠正。
 
@@ -39,14 +39,14 @@
 
 ACR 直连 API 已能读取目标仓库 `ruishi-java-prod/etbst-api`，仓库 ID 为 `crr-gkqkb2np05u435bf`。`cr list-repo-tag` 的返回含 `Digest` 字段；构建完成后可按本次唯一 tag 调用 `cr get-repo-tag --instance-id cri-73ffxebpi6ruw6sn --repo-id crr-gkqkb2np05u435bf --tag <本次tag> --region cn-beijing --profile ruishi-prod-acr` 查 digest。该查询能力已由现存 tag 的只读 API 返回证实，尚需验证新构建 tag 到部署任务的实际传值链路。
 
-## 控制台一次性授权清单（待办）
+## 控制台一次性授权清单（已完成，运行能力待验证）
 
-优先通过阿里云 devops API 核验、创建可用连接；Codeup 的 OAuth 授权若 API 无法完成，需由授权账号处理。完成后把各 ID 回填到 `deployment/flow/pipeline-etbst-api.yaml` 并执行 `apply`：
+已通过阿里云 devops API 和云效控制台完成连接配置，并将各 ID 回填 `deployment/flow/pipeline-etbst-api.yaml` 后执行 `apply`：
 
 1. **Codeup 服务连接**：连接 `xdghn746erjk8hdo`（API ID `580982`）已对 `power-application-user` 可见，并已回填模板；仍需通过流水线核验它能否拉取目标仓库。
-2. **容器镜像服务（企业版）服务连接**：新连接 `lhjkwns3zhj879ic`（API ID `943301`）已对 `power-application-user` 可见，可作为 `<ACR_SC>` 候选；仍需通过流水线核验其对北京实例 `cri-73ffxebpi6ruw6sn` 的实际推送能力。
+2. **容器镜像服务（企业版）服务连接**：新连接 `lhjkwns3zhj879ic`（API ID `943301`）已对 `power-application-user` 可见并回填 YAML；仍需通过流水线核验其对北京实例 `cri-73ffxebpi6ruw6sn` 的实际推送能力。
 3. **容器服务 Kubernetes（ACK）服务连接**：已创建 `fmayt57b9ttcjq61`（API ID `943303`），`power-application-user` 经 API 可见。创建时 API 的 `scope=PERSON` 返回 `Invalidscope`，`scope=CUSTOM` 成功。
-4. **Flow Kubernetes 集群注册**：在云效「全局设置 > Kubernetes 集群管理 > 新建 Kubernetes 集群」，选择“阿里云容器服务集群”，选 ACK 服务连接 `fmayt57b9ttcjq61`，再选 `ruishi-prod-acs`（真实集群 ID `cebc88343a44b4d759aa983a47b787835`），保存并邀请 `power-application-user` 为使用者。记录 Flow 页面显示的集群 ID，替换 YAML 的 `<FLOW_K8S_CLUSTER_ID>`。当前已公开的 devops CLI/OpenAPI 未提供创建此 Flow 集群资源的接口；仅创建 ACK 服务连接不足以通过 YAML 校验。参见[云效 Kubernetes 集群管理](https://help.aliyun.com/zh/yunxiao/user-guide/kubernetes-cluster-management)。
+4. **Flow Kubernetes 集群注册**：已在云效「全局设置 > Kubernetes 集群管理」用 ACK 服务连接 `fmayt57b9ttcjq61` 关联 `ruishi-prod-acs`（真实集群 ID `cebc88343a44b4d759aa983a47b787835`），Flow 集群 ID `UIuvaR8vFrIjY4lj`，并邀请 `power-application-user` 为使用者。该 ID 已通过流水线创建校验。参见[云效 Kubernetes 集群管理](https://help.aliyun.com/zh/yunxiao/user-guide/kubernetes-cluster-management)。
 5. （备选）若部署阶段不走 Flow 集群资源而用 shell+阿里云 CLI：需为 CI 准备经批准的 ACR/CS 权限并确认集群 API 可达。优先完成上述集群注册。
 
 流水线 YAML 校验报错时按报错信息调整 step 标识符（以云效「YAML 步骤清单」为准），apply 可反复执行直至通过。

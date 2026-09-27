@@ -2,6 +2,8 @@
 
 日期：2026-09-27。操作仓库：deploy-sys，分支 `deploy/acs-acceptance-evidence`。运维细节以 [../flow-release-commands.md](../flow-release-commands.md) 为准，本篇是任务交接：目标、进度、待办、问题。
 
+**续进展（2026-09-27，以下原始交接进度以此为准）：** 已创建 ACK 服务连接 `fmayt57b9ttcjq61`，在 Flow 注册 `ruishi-prod-acs` 集群（Flow ID `UIuvaR8vFrIjY4lj`），并授予 `power-application-user` 使用权限。正式流水线 `5300352` 已由该 RAM 用户通过 `apply` 创建，`GetPipeline` 回读成功；本地私有 `config/projects.local.yaml` 已填入流水线 ID。尚未触发真实构建、人工确认或生产部署，Codeup 拉取、ACR 推送、digest 传递与 ACS 更新均待实际运行验收。截图中的 ID 易将大写 `I` 和小写 `l` 混淆，应使用本段复制的原文。
+
 ## 一、任务目标
 
 生产 api/worker 服务已从"本地打包 + SSH 部署单机 ECS"迁入北京 ACS（镜像在 ACR 企业版）。目标是在本地 deploySys 里执行部署任务，远程完成"构建镜像 → push ACR → 上线 ACS"，即：
