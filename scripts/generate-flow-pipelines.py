@@ -35,14 +35,13 @@ def main():
                 sed 's#ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com#ruishi-prod-registry.cn-beijing.cr.aliyuncs.com#g' {dockerfile} > Dockerfile.flow
                 test \"$(grep -c 'ruishi-prod-registry.cn-beijing.cr.aliyuncs.com' Dockerfile.flow)\" -eq 2
 """
-            if sid == "m1x-api":
-                # 冷构建超过一小时，ACR 推送时授权已过期；只调整此构建的临时文件。
-                prep += """                cat > flow-maven-settings.xml <<'SETTINGS'
-                <settings><mirrors><mirror><id>aliyun-public</id><mirrorOf>central</mirrorOf><url>https://maven.aliyun.com/repository/public</url></mirror></mirrors></settings>
-                SETTINGS
-                awk '/^RUN mvn / { print "COPY flow-maven-settings.xml /tmp/flow-maven-settings.xml"; sub(/^RUN mvn /, "RUN mvn -s /tmp/flow-maven-settings.xml ") } { print }' Dockerfile.flow > Dockerfile.flow.tmp
-                mv Dockerfile.flow.tmp Dockerfile.flow
-                test "$(grep -c '^RUN mvn -s /tmp/flow-maven-settings.xml ' Dockerfile.flow)" -eq 1
+            # 构建源码必须自带并使用阿里云 Maven 设置；Flow 仅检查，不改 Maven 命令。
+            prep += """                test -f maven-settings.xml
+                grep -Eq '<mirrorOf>[[:space:]]*central[[:space:]]*</mirrorOf>' maven-settings.xml
+                grep -Eq '<url>[[:space:]]*https://maven[.]aliyun[.]com/repository/public/?[[:space:]]*</url>' maven-settings.xml
+                test "$(grep -c '^COPY maven-settings[.]xml maven-settings[.]xml' Dockerfile.flow)" -eq 1
+                test "$(grep -c '^RUN mvn .* -s /build/maven-settings[.]xml ' Dockerfile.flow)" -eq 1
+                echo 'maven_mirror_verified=aliyun-public source=dockerfile'
 """
             dockerfile = "Dockerfile.flow"
         build = f"""# pipeline-name: {sid}-手动构建

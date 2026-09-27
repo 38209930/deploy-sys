@@ -2,6 +2,17 @@
 
 首次生产发布与 ACS 回读结果见 [验收记录](acceptance-2026-09-27.md)。
 
+## Java 依赖源
+
+7 条 Java 构建流水线均从项目 Dockerfile 显式使用仓库内的 `maven-settings.xml`，把 Maven Central 映射到阿里云公共镜像。Yangu、DDMP 保留已有配置；M1X API／Worker、STOPMP、DGYE、VET 在各自代码库的 `release` 分支补齐 Dockerfile 与设置文件。Flow 仅将基础镜像地址从 VPC 域名改为公网域名，不再改写 Maven 命令。每次手动构建开始时，准备步骤检查设置文件、镜像地址及 Dockerfile 的 `COPY`／`mvn -s`，失败则阻止后续构建；通过时输出 `maven_mirror_verified=aliyun-public source=dockerfile`。构建完成后，原有命令继续核对源码提交、ACR tag 和 digest。本次只更新代码和流水线定义，没有触发构建或上线；首次运行时由流水线执行上述检查。
+
+| 代码库 | `release` 配置提交 |
+| --- | --- |
+| M1X API／Worker | `f713093` |
+| STOPMP API | `e47808e` |
+| DGYE API | `a488242` |
+| VET API | `287c1eb` |
+
 以下记录的是配置阶段的状态：当时仅完成配置与只读核验，尚未启动新流水线构建或更新生产镜像。
 
 ## 发布路径
