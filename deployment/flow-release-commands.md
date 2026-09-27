@@ -31,7 +31,11 @@
 
 2026-09-27 构建运行 `1` 登录 ACR 公网端点超时。经用户授权，对 ACR 实例 `cri-73ffxebpi6ruw6sn` 的公网 Registry 白名单追加云效北京公共构建集群所需的五个 `/32`：`112.126.70.240/32`、`123.56.255.38/32`、`47.94.150.88/32`、`47.93.89.246/32`、`47.94.150.17/32`；原有三条保留，回读共八条。地址来源：[云效构建集群官方文档](https://help.aliyun.com/zh/yunxiao/user-guide/build-a-cluster)。运行 `2` 登录成功，但源 Dockerfile 的基础镜像是 VPC 域名，公共构建机无法解析。流水线临时生成 `Dockerfile.flow`，仅将两个基础镜像地址换为同一实例的公网域名，不修改源码仓库 Dockerfile。运行 `3` 构建及推送成功，但旧版后续 digest 命令步骤失败；因此改为独立构建和部署两条流水线。
 
-构建流水线 `5300352` 运行 `4` 整体 **SUCCESS**；Codeup `release` Commit `1e09bf8147b5eba0d04ef4fe0333003e4ad887b2`，ACR tag `2026-09-27-18-40-20-1e09bf81`，ACR API `get-repo-tag` 回读 Digest `325cefc75daa088d274c073873884a2a1e4fd15f81b9bc64f135e5a92e30526d`，状态 `NORMAL`。部署流水线 `5300396` 运行 `2` 已通过镜像地址/Commit 输入校验，**WAITING** 在人工确认，尚未更新 ACS。运行 `1` 曾用于验证卡点，随后主动停止，未执行部署。上线前还需只读回读目标 Deployment 的实际容器名和原镜像，以保留回滚目标。
+构建流水线 `5300352` 运行 `4` 整体 **SUCCESS**；Codeup `release` Commit `1e09bf8147b5eba0d04ef4fe0333003e4ad887b2`，ACR tag `2026-09-27-18-40-20-1e09bf81`，ACR API `get-repo-tag` 回读 Digest `325cefc75daa088d274c073873884a2a1e4fd15f81b9bc64f135e5a92e30526d`，状态 `NORMAL`。部署流水线 `5300396` 运行 `2` 先通过镜像地址/Commit 输入校验并停在人工确认；运行 `1` 曾用于验证卡点，随后主动停止，未执行部署。
+
+**上线验收（2026-09-27）：** 用户明确授权生产镜像更新后，通过部署流水线 `5300396` 运行 `2` 的人工卡点；输入校验、人工确认和 ACS 部署三个阶段均为 **SUCCESS**。上线前通过 CS API 获取 15 分钟临时 kubeconfig，仅作只读核验，临时文件放仓库外、权限 `0600`、用后删除。目标为北京集群 `cebc88343a44b4d759aa983a47b787835`、Namespace/Deployment/容器 `etbst-api`。原镜像回滚地址为 `ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api@sha256:efc2382dce053cc3e15d915f8f36ae726546563d65337b0efae337110008692e`；原状态为 1/1 Ready、Pod 重启数 0。部署步骤只执行该 Deployment 容器的 `kubectl set image`，未改 Secret、Service 或 Ingress。上线后 Deployment 第 5 代已被控制器观察，更新副本/Ready/可用均为 1/1；`kubectl rollout status deployment/etbst-api` 成功，新 Pod `etbst-api-66955b596-8zw7s` Running/Ready、重启数 0，旧 Pod 已退出，EndpointSlice 唯一 Ready endpoint 指向新 Pod。Deployment 镜像回读为 `ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api@sha256:325cefc75daa088d274c073873884a2a1e4fd15f81b9bc64f135e5a92e30526d`。Ingress Host 为 `et-bst-api.svision100.com`；DNS 指向北京 ALB，HTTPS TLS 校验通过，未登录访问 `/actuator/health` 返回 `401`，与上线前一致。认证业务、短信真实投递、调度周期及应用依赖日志未验收，不能以 Ready 或 401 代替这些业务验证。
+
+本次构建和部署由 CLI/API 分别启动以排查问题；`scripts/flow-release.sh build` 新增的“构建成功后自动关联 ACR tag 并启动部署流水线”编排尚未作为一个命令端到端重跑。脚本已通过语法检查，构建、ACR 回读、运行变量传递、人工卡点及 `deploy` 子命令分别在本次运行中验证。
 
 注意：`ListServiceConnections` 查询 Codeup 时必须传 `--sericeConnectionType codeup`（小写）；CLI 帮助列出的 `Codeup`（大写）会返回空列表。此前由此造成的“连接未生效”判断已纠正。
 

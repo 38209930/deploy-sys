@@ -2,7 +2,7 @@
 
 日期：2026-09-27。操作仓库：deploy-sys，分支 `deploy/acs-acceptance-evidence`。运维细节以 [../flow-release-commands.md](../flow-release-commands.md) 为准，本篇是任务交接：目标、进度、待办、问题。
 
-**最新进展（2026-09-27，以下原始交接进度以此为准）：** 已建两条流水线：构建 `5300352`、固定 digest 上线 `5300396`，Flow 集群 ID `UIuvaR8vFrIjY4lj`。构建运行 `4` 整体成功，Codeup `release` Commit `1e09bf8147b5eba0d04ef4fe0333003e4ad887b2`，ACR tag `2026-09-27-18-40-20-1e09bf81`，Digest `325cefc75daa088d274c073873884a2a1e4fd15f81b9bc64f135e5a92e30526d` 已由 ACR API 回读。上线流水线运行 `2` 输入校验成功，正处于 `WAITING` 人工确认，**尚未更新 ACS**。上线前须只读核对目标 Deployment 的实际容器名和当前镜像，记录回滚目标；然后通过人工卡点并按 etbst 发布说明书验收。此次调试与网络白名单变更详见 [../flow-release-commands.md](../flow-release-commands.md)。下文早期交接清单保留历史背景，不代表当前待办。
+**最新进展（2026-09-27，以下原始交接进度以此为准）：** etbst-api 试点的构建、ACR 固定 digest 查询、人工确认、ACS 镜像更新及基础上线验收已跑通。构建流水线 `5300352` 运行 `4` 和部署流水线 `5300396` 运行 `2` 均为 **SUCCESS**，Flow 集群 ID `UIuvaR8vFrIjY4lj`。Codeup `release` Commit `1e09bf8147b5eba0d04ef4fe0333003e4ad887b2`，ACR tag `2026-09-27-18-40-20-1e09bf81`，上线镜像 Digest `325cefc75daa088d274c073873884a2a1e4fd15f81b9bc64f135e5a92e30526d`。原镜像回滚 Digest `efc2382dce053cc3e15d915f8f36ae726546563d65337b0efae337110008692e`。Deployment/Pod/Endpoint 1/1 Ready，正式 Host TLS 通过、未登录健康请求 401；认证业务、短信投递与调度周期未验收。调试、网络白名单变更与详细验收证据见 [../flow-release-commands.md](../flow-release-commands.md)。下文早期交接清单保留历史背景，不代表当前待办。
 
 ## 一、任务目标
 
