@@ -12,3 +12,10 @@
   - NAT 出口（即固定 EIP）：峰值 < 0.01 Mbps（上限 10），无会话限制丢弃、无端口分配错误。NAT 自 09-26 21:29 CST 创建，之前无此数据。
   - 结论：**全链路利用率极低，无任何资源需要扩容**；继续按周采样观察 ddmp-api 内存趋势。
 - 遗留：Pod 级三日重启计数因 VPN 断开未取（注：云监控无 ECI 指标、集群无 metrics-server，三日逐时 CPU/内存历史本身不可回溯，只能从现在起按周采样积累）。
+
+### 2026-09-27 上午（VPN 恢复后补记）
+
+- OpenVPN 已恢复，补做 Pod 级巡检：19 个 Pod 中 17 个业务 Pod 全部 Running、重启 0；dgye 两个历史诊断 Pod 维持原状（ErrImagePull/Completed，非运行负载）。
+- 经管理员同意安装集群组件 `managed-metrics-server` v0.3.9.5（安装任务 `T-6ab8681c441e6701030032b3`，RequestId `01A0E056-ADF9-51CD-98A8-02668115CCDC`，08:50 完成）；`kubectl top pods -A` 验证可用，读数与 cgroup 采样吻合（ddmp 483Mi、yangu 486Mi）。该组件为托管形态，集群内不落业务 Pod。
+- 云监控 ECI 指标评估结论：**不启用**——该账号 CMS 无 ECI 命名空间指标，开启需逐实例注入，且 metrics-server 已覆盖需求，属重复建设。
+- 按管理员要求，`yangu-api` 与 `ddmp-api` 同列为内存趋势重点观察对象（2Gi 档，当前 24%，RSS 20%）。
