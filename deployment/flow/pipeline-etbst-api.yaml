@@ -5,7 +5,7 @@
 #
 # 带 <> 的占位符在云效控制台创建对应服务连接后替换（见 deployment/flow-release-commands.md 清单）：
 #   <CODEUP_SC>  Codeup 服务连接 ID（需能访问 ddmp/et-bst-api 仓库）
-#   <ACR_SC>     容器镜像服务（企业版实例 cri-73ffxebpi6ruw6sn）服务连接 ID
+#   ACR 服务连接 lhjkwns3zhj879ic 已对 power-application-user 可见，推送能力待验证
 #   <ACK_SC>     容器服务 Kubernetes 集群（cebc88343a44b4d759aa983a47b787835）服务连接 ID
 #
 # ACR 企业版构建及 Kubernetes 镜像更新步骤已按云效官方步骤清单核对；digest 传递仍待验证。
@@ -33,7 +33,7 @@ stages:
             name: 构建镜像并推送ACR企业版
             step: ACREEDockerBuild   # 仓库根 Dockerfile 多阶段构建
             with:
-              serviceConnection: <ACR_SC>
+              serviceConnection: lhjkwns3zhj879ic
               region: cn-beijing
               artifact: etbst_api_image
               instance: ruishi-prod

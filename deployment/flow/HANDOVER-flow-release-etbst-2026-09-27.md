@@ -23,6 +23,7 @@
 - 文档：`deployment/flow-release-commands.md`、README 新章节、`config/projects.yaml` 模板注释。
 - `power-application-user` 已手动同步为 `svision100的代码库`（`659a5cefd64a2eb2dceb72f3`）的普通成员；`ListJoinedOrganizations`、`ListPipelines`、`ListServiceConnections` API 已可调用。发布脚本默认组织已纠正为该组织。
 - 已用 svision100 主账号通过阿里云 API 将 `power-application-user` 加为 `ddmp/et-bst-api`（仓库 ID `6424213`）的单仓库浏览者（20）；管理员成员列表和该 RAM 用户的仓库列表均已回读确认。
+- 新 ACR 服务连接 `lhjkwns3zhj879ic`（API ID `943301`）已由 svision100 设置为指定成员可见，`power-application-user` 经 devops API 回读可见；目标企业版实例推送能力尚待流水线实测。
 - 仓库单测 27/28 过，1 个失败是本机 git 2.15 过旧（不支持 `git init -b`）的既有环境问题，与本次无关。
 
 **未完成（服务连接和 digest 传递待落实）：** 流水线正式创建、首次真实构建与上线验收。
@@ -32,13 +33,13 @@
 **A. 服务连接待办（优先经 API，必要时由授权账号在控制台处理）：**
 
 1. 核验并取得可用于 `ddmp/et-bst-api` 的 **Codeup 服务连接**。单仓库浏览者权限已授予 `power-application-user`。此前控制台显示私密连接 `xdghn746erjk8hdo`（授权 `413656`），但 svision100 主账号与该 RAM 用户通过 API 查询 Codeup 连接列表均为空；不能据此认定连接可用。OAuth 授权若 API 无法完成，需授权账号操作。
-2. 核验现有 **ACR 服务连接** `o1gxp5wzksoe1mtu`（API ID `581029`）能否用于企业版实例 `cri-73ffxebpi6ruw6sn` 及目标流水线；不适用时创建专用连接。
+2. 核验新 **ACR 服务连接** `lhjkwns3zhj879ic`（API ID `943301`）能否用于企业版实例 `cri-73ffxebpi6ruw6sn` 及目标流水线；其对目标 RAM 用户的可见性已验证，推送能力尚未验证。
 3. 创建 **Kubernetes（ACK/ACS）服务连接**：集群 `ruishi-prod-acs`（`cebc88343a44b4d759aa983a47b787835`）；`power-application-user` 查询 ACK 连接列表为空。
 4. 对服务授权和服务连接使用范围做最小权限核验，再以 API 回读确认。
 
 **B. 管理员完成 A 之后（AI 会话可继续执行）：**
 
-1. 把三个服务连接 ID 回填 `deployment/flow/pipeline-etbst-api.yaml` 占位符（`<CODEUP_SC>` / `<ACR_SC>` / `<ACK_SC>`），补齐人工确认、实际容器名及构建产物 digest 的查询、校验和传递。当前 YAML 仍是骨架，不能直接 apply；云效镜像制品默认提供 tag 地址，不得直接用于要求固定 digest 的生产部署。
+1. ACR 服务连接 ID 已回填 `deployment/flow/pipeline-etbst-api.yaml`；继续回填 `<CODEUP_SC>` / `<ACK_SC>`，补齐人工确认、实际容器名及构建产物 digest 的查询、校验和传递。当前 YAML 仍是骨架，不能直接 apply；云效镜像制品默认提供 tag 地址，不得直接用于要求固定 digest 的生产部署。
 2. `bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml` 创建流水线，把流水线 ID 填入 `config/projects.local.yaml`（替换 `__FLOW_PIPELINE_ID__`）并更新模板文档。
 3. 与管理员确认时机后跑首次真实构建：`push`（如需）→ `build` → 按仓库内 etbst 发布说明书（分支 `docs/etbst-acs-release-handbook-20260926`，`Doc/deployment/etbst-api-acs-release-runbook.md`）验收上线。
 4. 跑通后按 [../flow-release-commands.md](../flow-release-commands.md)「复制到其他项目」模板逐个接入，并在该文件登记流水线 ID。
