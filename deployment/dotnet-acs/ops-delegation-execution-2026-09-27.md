@@ -84,9 +84,9 @@ Pod 位置 11:0x 读回（副本/重启全部正常）：STOPMP `172.31.239.13`�
 
 | # | 资源/指标 | 条件（CMS 可实现形式） | 级别 | 备注 |
 |---|---|---|---|---|
-| 1 | ALB `DualStack_ListenerHTTPCode5XX`（acs_alb，实例 alb-olyb9…） | 目标为 5 分钟 5XX 请求数 > 20；API 阈值待换算 | P1 | 该指标官方单位为 Count/s，不能直接把 5 分钟 `Sum > 20` 当作请求总数。先用历史窗口验证 CMS 聚合值与真实计数的换算，再写规则；低流量抑制也须用实际可配置能力核对。 |
-| 2 | NAT `BWRateOutToOutside`（acs_nat_gateway，ngw-2zet…） | 5 分钟 Average > 7 Mbps（7,000,000 bps） | P2 | 对应 10 Mbps 上限 70% 预警；原文 8,750,000 bps 为算术错误，已修正。 |
-| 3 | NAT 同指标 | 5 分钟 Average > 8.5 Mbps 且有业务失败 | P1 | CMS 无复合条件，升级路径为人工（收到 P2 后查业务失败率） |
+| 1 | ALB `ListenerHTTPCode5XX`（acs_alb，HTTPS 443 监听） | `Period=60`、`Statistics=Value`、单分钟速率 `>0.3 count/s`（约 18 次/分钟）1 次；持续低速故障另设 `>0.067 count/s` 连续 3 次的候选规则 | P1 | 2026-09-27 元数据确认此指标 `is_alarm=true`；原草案 `DualStack_ListenerHTTPCode5XX` 为 `is_alarm=false`。09-26 15:53 的 1 分钟值为 `2.17 count/s`，与约 130 次/分钟吻合；同窗口的 300 秒数据却返回 0，故不采用 5 分钟周期。阈值是待联系人触达和历史误报回放后确认的初值，并不等于“5 分钟累计 >20 次”的精确规则。 |
+| 2 | NAT `BWRateOutToOutside`（acs_nat_gateway，ngw-2zet…） | `Period=60`、`Statistics=Value`、`>7,000,000 bit/s` 连续 5 次 | P2 | 对应 10 Mbps 上限 70% 持续 5 分钟预警；原文 8,750,000 bps 为算术错误，已修正。 |
+| 3 | NAT 同指标 | `>8,500,000 bit/s` 且有业务失败 | P1 | CMS 无复合条件，升级路径为人工（收到 P2 后查业务失败率）；不创建虚假的复合规则 |
 | 4 | NAT `ErrorPortAllocationRate` | > 0 持续 1 周期 | P1 | 端口分配失败即异常 |
 | 5 | NAT `DropTotalPps` | > 0 持续 3 周期 | P2 | 丢包趋势 |
 | 6 | Pod 非 Ready / 重启增加、内存 >80% limit | **CMS 不支持 K8s 指标**；metrics-server 已就绪但无告警链路 | — | 两条实现路径：a) 值班每日巡检 + 扩展 resource-snapshot.sh 输出超限清单（零成本，已可用）；b) 接入 ARMS Promethues 告警（集群已存在 CMS Prometheus workspace，接入状态待证据，可能产生费用）。建议先 a 后评估 b |
@@ -94,6 +94,8 @@ Pod 位置 11:0x 读回（副本/重启全部正常）：STOPMP `172.31.239.13`�
 | 8 | EIP 带宽（等同 #2，同源指标） | 同 #2 | — | 与 #2 合并实施 |
 
 指标单位按[阿里云 ALB 监控说明](https://help.aliyun.com/en/slb/application-load-balancer/alb-monitoring-and-alerting)与[公网 NAT 监控说明](https://help.aliyun.com/en/nat-gateway/user-guide/view-monitoring-data)复核。规则表是实施草案，尚无联系人验证或写入授权。
+
+**规则可行性复核（11:36 CST）**：`DescribeMetricMetaList` 的 ALB 两个指标 RequestId 分别为 `01A0E0ED-C42F-585A-875A-48BDA60B3352`（DualStack，`is_alarm=false`）及 `01A0E0ED-E32F-5510-A3F2-A863F448E4FD`（非 DualStack，`is_alarm=true`）；`DescribeMetricList` 在 09-26 15:50–16:00 CST 的 60 秒序列见 15:52 `0.23`、15:53 `2.17`、15:54 `0.56 count/s`，300 秒序列两点均为 0。按 09-26 的 60 秒历史序列回放，`>0.3 count/s` 能命中 11:35、11:38、11:39、11:42、11:44、15:53、15:54 等峰点；`>0.067 count/s` 连续 3 次能覆盖 11:35–11:44 和 15:52 附近的持续窗口（RequestId `01A0E0F0-A57A-54F4-A963-075D1326780F`）。NAT 三项元数据均为 `Statistics=Value`、`is_alarm=true`。因此原草案中 ALB 指标和 NAT `Average` 统计口径均不可直接照抄为生产规则。联系人 `ack_svision100` 的 Mail/SMS 在本次核对时仍为 `PENDING`（RequestId `01A0E0ED-A39C-5985-958F-DA3B64C4EB57`）；实际规则仍为 0 条。
 
 ### 待授权清单（D 项）
 
@@ -123,3 +125,16 @@ Pod 位置 11:0x 读回（副本/重启全部正常）：STOPMP `172.31.239.13`�
 - 原报告有一条可定位的 `auth.ip_not_allowed` 请求和两条重试队列终态记录；两条队列项是否对应两个独立短信事件、是否需要补发，须由业务记录按事件 ID 核对，不能仅凭队列数量断言“两名用户均未收到短信”。
 
 本补记为原委托任务收尾后的独立授权变更；上文 10:18 的故障及原任务“只读取证”口径均作为历史事实保留。
+
+### 补充核对：新零售与 Java 项目来源白名单
+
+11:36 通过 ACS API 只读取得运行中 Pod IP，并与上述写前快照中的既有**全局、启用**规则及本次写后读回的两条新规则比对：
+
+| 来源范围 | 已覆盖规则 | 本次观察到的项目 |
+|---|---|---|
+| 旧北京 k：`172.31.224.0/20` | 既有全局规则，写前即启用 | STOPMP、ETBST、DDMP、新零售 Back/Worker、经销商 |
+| 旧北京 i：`172.28.48.0/20` | 既有全局规则，写前即启用 | 新零售 Front |
+| 新北京 k：`172.31.240.0/24` | 11:26 新增全局规则，写后启用 | Yangu、M1X API/Worker、AI、售后、积分商城 |
+| 新北京 i：`172.28.64.0/24` | 11:26 新增全局规则，写后启用 | 当前这些目标业务 Pod 未落此网段；保留跨可用区覆盖 |
+
+DGYE、VET 当前没有运行中的业务 Pod；其已记录的旧网段属于既有白名单覆盖。此次没有新增旧 `/20` 规则，也没有扩大至整个 VPC。**IP 覆盖只是 SmsCore 的来源门槛**：各项目是否实际启用 `ruishi` 通道、应用身份/HMAC 及真实短信受理仍需逐项目证据；不能仅凭此表宣称全部短信业务验收通过。11:26 后截至本次核查，售后 Worker 日志未见新的短信发送事件或 `auth.ip_not_allowed`，因此还没有新网段的真实发送成功证据。新零售的短信来源同样已覆盖，但它仍在无 SNAT 的旧 Pod 网段；历史公网调用超时须由单独的出口迁移处理，不能通过 SmsCore 白名单修复。
