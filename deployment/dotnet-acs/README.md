@@ -14,9 +14,9 @@
 
 | 资源 | 当前事实 |
 |---|---|
-| ACS | 北京 `ruishi-prod-acs`，集群 ID `cebc88343a44b4d759aa983a47b787835`；此前只读盘点为 Java 项目，随后新零售和经销商查询已发布到各自 Namespace，变更前须重新盘点实际运行状态 |
+| ACS | 北京 `ruishi-prod-acs`，集群 ID `cebc88343a44b4d759aa983a47b787835`；当前选址及副本以[统一出口执行记录](egress-release-execution-2026-09-27.md)和实时检查为准 |
 | VPC | `vpc-2zervez1jgscsglpenrzo` |
-| vSwitch | `vsw-2zeagdbk8hizkkdw0ns42`（`172.31.224.0/20`，盘点时可用 IP 4076）；`vsw-2zec5qkbaiafqu3pyuamo`（`172.28.48.0/20`，可用 IP 4085） |
+| vSwitch | 旧网段 `vsw-2zeagdbk8hizkkdw0ns42`（`172.31.224.0/20`）、`vsw-2zec5qkbaiafqu3pyuamo`（`172.28.48.0/20`）；业务新网段 `vsw-2zevd832gq3313j6gv5sj`（`172.31.240.0/24`）、`vsw-2zesy6off4gy39tqripzp`（`172.28.64.0/24`），经现有 NAT 出口 |
 | 新 ALB | `alb-olyb9enxszy3f42nnn`，公网，DNS `alb-olyb9enxszy3f42nnn.cn-beijing.alb.aliyuncsslb.com`；HTTPS 443 监听 `lsn-3hl3j4qtjt8b1z7jkl`；集群 IngressClass 为 `alb` |
 | ACR | 企业版经济型 `ruishi-prod`，实例 `cri-73ffxebpi6ruw6sn`；`ruishi-dotnet-prod` 已创建。当前 ACS Deployment 的镜像均为 ACR digest；各角色构建记录以发布记录和 ACR API 读回为准 |
 | 既有应用 | 2026-09-26 23:39 ACS 快照：Java 的 STOPMP、ETBST、DDMP、Yangu、M1X API/Worker 为 1/1，DGYE、VET 为 0；.NET 的新零售三角色、AI 两角色、积分 Back/Worker、售后 Front/Back、经销商 API 为 1/1。**售后 Worker 随后于 2026-09-27 00:21 启动。** 本次复盘未能读回 ACS 实时副本；SmsCore ECS 当前为 Running |
@@ -27,10 +27,10 @@
 
 ## 当前进度及阻断项
 
-- 公共 NAT、EIP、旧路由隔离、两个新 Pod vSwitch 和稳定 SNAT 已按[实施记录](egress-nat-execution-2026-09-26.md)完成；2026-09-27 08:32 OpenAPI 再次读回 NAT `Available`、EIP `InUse`、两条 SNAT `Available`。历史记录显示 AI、售后、积分、Yangu、M1X 已有角色落新网段；Java 的 STOPMP/ETBST/DDMP、新零售和经销商在旧网段。本次因本机 OpenVPN 路由缺失未读回实时 Pod IP，迁移前必须重新核对。
+- 公共 NAT、EIP、两个新 Pod vSwitch 和两条 SNAT 已建。2026-09-27 本轮通过私网 ACS API 读回并完成新零售、经销商、STOPMP、ETBST、DDMP 迁移；Yangu、M1X API/Worker、积分商城 Back/Worker 已在新网段，均纳入默认选址和准入检查。DGYE/VET 保持零副本，仅预置新网段模板。逐项证据和未完成的业务观察见[统一出口执行记录](egress-release-execution-2026-09-27.md)。
 - 最近一次 ACS 历史快照中 AI Back/Worker、积分 Back/Worker、售后 Front/Back/Worker、经销商单体 API、新零售三角色为 1/1；积分 Front 仍留 ECS。2026-09-27 08:32，九个正式 .NET API Host 的 HTTPS `/health/ready` 均返回 200，**业务验收、Worker 到期任务和供应商侧出口证据不能由此推断**。
 - 每项目代码审查、实际公网调用/SDK/白名单、短信真实投递、资金和 ERP 结果、告警与 24 小时观察仍需逐项核对。`points-mall-front` 的 Codeup 绑定曾失败，该角色目前不在 ACS，不能使用预部署计划中的“三角色均上线”说法。
-- NAT 创建前的准备快照见[网段记录](network-constraints-2026-09-26.md)；它不是当前资源状态。最近一次只读资源核对见[部署复盘](production-review-2026-09-27.md)，ACS 实时状态须恢复私网 API 访问后重新读回。
+- NAT 创建前的准备快照见[网段记录](network-constraints-2026-09-26.md)；它不是当前资源状态。早期[部署复盘](production-review-2026-09-27.md)保留当时的 VPN 限制记录；本轮 ACS 私网 API 已恢复访问，每次生产变更仍须重新读回。
 
 发布不得以编译通过、Pod Ready、HTTP 401/404 代替真实业务验收。任何一项阻断未消除，保持旧系统运行并停在对应阶段。
 

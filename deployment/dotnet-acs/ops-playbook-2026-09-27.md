@@ -1,6 +1,6 @@
 # 北京 ACS 生产运维值班手册
 
-状态：本手册供实际值班人员按需执行，**不代表已建立自动巡检、后台常驻 AI 值班或 24×7 告警**。先阅读[2026-09-27 只读复盘](production-review-2026-09-27.md)的证据边界；下列工作负载表是 00:30 的历史基线，本次 08:32 未能读回 ACS 实时状态。基础规则见[运维备忘录](operations.md)、[发布手册](runbook.md)、[出口手册](egress-nat.md)。所有内容不含凭据、配置值和客户数据。
+状态：本手册供实际值班人员按需执行，**不代表已建立自动巡检、后台常驻 AI 值班或 24×7 告警**。当前网络状态以[统一出口执行记录](egress-release-execution-2026-09-27.md)和实时[发布检查](egress-release-check.py)为准；早期[只读复盘](production-review-2026-09-27.md)保留历史证据。基础规则见[运维备忘录](operations.md)、[发布手册](runbook.md)、[出口手册](egress-nat.md)。所有内容不含凭据、配置值和客户数据。
 
 2026-09-27 补记：主公确认 AI FrontApi 已下线，停止状态属于预期；不再将它列为待恢复或迁移对象。本次委托的 ALB、售后 Worker、旧网段与告警步骤见[专项任务书](ops-delegation-alb-worker-egress-alerts-2026-09-27.md)。下文旧 ECS 表仅保留历史盘点时点。
 
@@ -20,13 +20,12 @@
 | 旧 Pod vSwitch | `vsw-2zeagdbk8hizkkdw0ns42`（k）、`vsw-2zec5qkbaiafqu3pyuamo`（i）；**无公网出口** |
 | 短信 | 设计路径为 Pod → 私网 SmsCore `172.27.182.18:3090`（ECS `i-2ze38hdx1sufodad2kz0`）；该 ECS 公网 IP 为 `39.107.141.33`，供应商实际看到的出口 IP 待核对；项目生效短信路由仍需逐项取证 |
 
-### 工作负载基线（2026-09-27 00:30 起的期望状态）
+### 工作负载基线（2026-09-27 本轮迁移后读回）
 
 | 位置 | 工作负载 | 期望 |
 |---|---|---|
-| 新网段 `172.31.240.x` | ai-study back/worker；service-order front/back/**worker**；points-mall back/worker；yangu-api；m1x-api；m1x-worker | 各 1/1、Running、重启 0 |
-| 旧网段 `172.31.239.x` 等 | stopmp-api；etbst-api；ddmp-api；new-retail front/back/worker；agent-query-api | 各 1/1；**当前无公网出口**（见 §5 待办 4） |
-| 零副本 | dgye-api、vet-api | 保持 0，Ingress 存在不代表可服务 |
+| 新网段 `172.31.240.x` | ai-study back/worker；service-order front/back/worker；points-mall back/worker；yangu-api；m1x-api/worker；stopmp-api；etbst-api；ddmp-api；new-retail front/back/worker；agent-query-api | 各 1/1；发布前以 API 重新读回 Ready、重启和 IP |
+| 零副本，模板已预置新网段 | dgye-api、vet-api | 保持 0，Ingress 存在不代表可服务；历史终态诊断 Pod 不等于运行中的业务 |
 | 旧 ECS | 2026-09-27 08:32 OpenAPI 读回：AI、售后 ECS `Stopped`，积分 ECS 和 SmsCore ECS `Running`；积分 FrontApi 及 Redis 消费者的进程状态、website/以旧换新 ECS 均未在本次复核中验证 | 不擅自开机/停机；运行中的 ECS 不等于应用服务已启动 |
 
 2026-09-27 08:32 入口基线：`.NET` 九个 Host（`rsst-back-api`、`rsod-front-api`、`rsod-back-api`、`rsjf-back-api`、`ns-front-api`、`ns-back-api`、`4l-api`、`rsqapi-ft`、`rsqapi-bk`，均加 `.svision100.com`）的 `/health/ready` = **200**。Java 的 `stop-mp-api`、`et-bst-api`、`ddmpapi`、`rsapi`、`m1x-api` 曾以 **401** 作为需认证的健康端点基线，巡检时重新核对。探测须使用真实域名和正确 SNI；仅给 ALB 域名加 Host 头的 TLS 失败不足以判断业务故障。
@@ -58,7 +57,7 @@
 
 1. **证书**：核对 ALB 上两组域名的证书有效期（控制台或 API），到期前 30 天提交续期计划；续期先在新 ALB 指定 Host/SNI 验证再改正式入口。
 2. **配置与镜像版本对账**：读回各 Deployment 的镜像 digest，与[发布记录](release-records.md)比对，出现"文档外的镜像"即查明来源。
-3. **SmsCore 私网路径复测**：从新、旧网段各选一个 Pod，TCP 探测 `172.27.182.18:3090`；设计路径走私网；各项目生效路由及 SmsCore 受理结果需另核对。
+3. **SmsCore 私网路径复测**：从两个新网段各选一个诊断 Pod，TCP 探测 `172.27.182.18:3090`；设计路径走私网；各项目生效路由及 SmsCore 受理结果需另核对。
 4. **数据库/Redis/Mongo 回程抽测**：参照[网段记录](network-constraints-2026-09-26.md)的目标清单做 TCP 连通抽测（只建连，不读数据）。
 5. **遗留项评审**：过一遍 §5 待办清单，推进或向管理员汇报。
 
@@ -67,7 +66,7 @@
 1. **售后 Worker 24 小时观察**（2026-09-27 启动）：观察期内每日巡检第 4 步必做；重点看首个真实到期任务的业务结果（发货/退款/短信补偿），由业务侧确认结果，运维只确认任务调度与无错误。
 2. **告警渠道未落实**：NAT/EIP/ALB/工作负载的告警接收渠道、通知人尚未核验——这是当前最大的盲区。优先与管理员确定接收方式（短信/钉钉/邮件），配置后做一次实测。
 3. **Yangu、M1X 出口补验**：两项目有迁入新网段的历史记录，但微信/支付/供应商白名单和真实 SDK 调用尚无验收证据；按[出口手册](egress-nat.md)第 3 节逐项补验，尤其核对供应商侧是否要求把 `39.96.67.239` 加白。项目当前是否有用户，应由流量和业务记录确认。
-4. **旧网段项目无公网出口**：stopmp、etbst、ddmp、new-retail、agent-query 的 Pod 在旧网段，旧路由表无默认路由，**这些 Pod 现在出不了公网**。new-retail 此前已记录微信支付超时。若业务需要其公网能力，按项目门槛（短信通道、白名单、任务幂等）迁入新网段；不需要则维持现状。禁止用"加路由/SNAT"代替项目迁移。
+4. **迁移后业务验收**：stopmp、etbst、ddmp、new-retail、agent-query 已迁新网段，Yangu、M1X 和积分 Back/Worker 也已核对。公网出口及入口的网络证据见[执行记录](egress-release-execution-2026-09-27.md)；真实微信/支付/短信/任务结果和至少 24 小时观察尚需按项目补齐。下一次零点后只读核对实际启用的 Java 扣费任务，结果不明时不补跑。
 5. **积分商城 Front 迁移**：旧 Front 在 ECS 且启动了 Redis 消费者；迁移前必须单独评审重复消费与幂等（见[发布记录](release-records.md)积分商城节），不能套通用流程。
 6. **DGYE、VET 零副本**：与管理员确认是长期停用（考虑清理 Ingress 与镜像，省 ACR 存储）还是待部署。
 7. **配置版本与源码 SHA 对账**：各项目 `release` SHA、Secret 版本仍未完整入册（[发布记录](release-records.md)汇总表大量"待验证"），每月任务第 2 步逐步补齐。
@@ -87,7 +86,7 @@
 - **单一 Pod 异常**（重启/CrashLoop/Ready 失败）：describe 看 events → 有界日志 → 判断镜像/配置/依赖 → 修不了先回滚该项目，不反复重启掩盖问题。
 - **某域名异常**：先确认解析与证书，再查 Ingress → Service → Pod；401/403 要结合认证基线解释（Java 健康端点 401 是正常）。
 - **公网外呼失败（新网段项目）**：按序查 NAT 状态 → SNAT 命中 → EIP 绑定与带宽 → DNS/TLS → 供应商白名单；单项目问题只回滚该项目选址，不动共享出口。
-- **旧网段项目本就无公网出口**：这不是新故障；如业务突然需要公网能力，走 §5-4 的迁移门槛，不当场改网络。
+- **业务 Pod 意外落旧网段**：立即核对 Namespace 默认 selector、Deployment 模板、准入 Binding 与[网络清单](egress-network-inventory.yaml)；暂停该项目新发布，不直接改共享 NAT/路由。
 - **Worker 疑似重复执行**：立即停新调度，核对旧服务状态、锁拥有者与租期、幂等记录，已产生的外部副作用先查询后处理，不盲删锁、不批量补跑。
 - **支付/退款/短信超时**：先按业务单号向平台/供应商查结果，再决定重试；重试必须带原幂等标识。
 - **ECS 意外 Stopped**：不擅自开机，先报管理员确认（历史上有主动停机的先例，以 ActionTrail 和管理员确认为准）。

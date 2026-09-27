@@ -20,7 +20,7 @@ POLICIES = ("deployment", "pod")
 
 
 def run(*args, data=None):
-    result = subprocess.run(args, input=data, text=True, capture_output=True, check=False)
+    result = subprocess.run(args, input=data, text=True, capture_output=True, check=False, timeout=60)
     if result.returncode:
         raise RuntimeError(f"{args[0]} 失败：{result.stderr[:300]}")
     return result.stdout
@@ -28,7 +28,7 @@ def run(*args, data=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("namespace", choices=("new-retail", "agent-query", "stopmp-api", "etbst-api", "ddmp-api"))
+    parser.add_argument("namespace", choices=("new-retail", "agent-query", "stopmp-api", "etbst-api", "ddmp-api", "dgye-api", "vet-api"))
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
     identity = json.loads(run("aliyun", "sts", "GetCallerIdentity", "--profile", PROFILE))
@@ -37,11 +37,13 @@ def main():
     response = json.loads(run("aliyun", "cs", "DescribeClusterUserKubeconfig", "--ClusterId", CLUSTER,
                               "--PrivateIpAddress", "true", "--TemporaryDurationMinutes", "15",
                               "--profile", PROFILE, "--region", "cn-beijing"))
+    if response.get("Code") or not response.get("config"):
+        raise RuntimeError("ACS 临时访问材料为空")
     with tempfile.TemporaryDirectory(prefix="acs-egress-protect-") as directory:
         config = os.path.join(directory, "config")
-        with open(config, "w", encoding="utf-8") as file:
+        descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as file:
             file.write(response["config"])
-        os.chmod(config, 0o600)
 
         def kubectl(*params, data=None):
             return run("kubectl", "--kubeconfig", config, *params, data=data)
@@ -59,7 +61,8 @@ def main():
                 raise RuntimeError(f"Deployment {dep['metadata']['name']} 未显式使用两个新 vSwitch")
             if dep["status"].get("readyReplicas", 0) != dep["spec"].get("replicas", 1):
                 raise RuntimeError(f"Deployment {dep['metadata']['name']} 未全部 Ready")
-        active = [pod for pod in pods if not pod["metadata"].get("deletionTimestamp")]
+        active = [pod for pod in pods if not pod["metadata"].get("deletionTimestamp")
+                  and pod["status"].get("phase") not in ("Succeeded", "Failed")]
         if len(active) != sum(dep["spec"].get("replicas", 1) for dep in deployments):
             raise RuntimeError("Pod 数与期望副本不符")
         for pod in active:
@@ -83,7 +86,7 @@ def main():
         for kind in POLICIES:
             name = f"ruishi-egress-{kind}-{args.namespace}"
             result = subprocess.run(["kubectl", "--kubeconfig", config, "get", "validatingadmissionpolicybinding", name],
-                                    capture_output=True, text=True)
+                                    capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 raise RuntimeError(f"Binding {name} 已存在，请检查是否部分完成")
             source = get("validatingadmissionpolicybinding", f"ruishi-egress-{kind}-ai-study")

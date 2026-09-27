@@ -17,6 +17,7 @@ import yaml
 INVENTORY = Path(__file__).with_name("egress-network-inventory.yaml")
 PROFILE = "ruishi-prod-acr"
 ANNOTATION = "network.alibabacloud.com/vswitch-ids"
+JAVA_SCHEDULED = {"stopmp-api", "etbst-api", "ddmp-api", "yangu-api", "dgye-api", "vet-api"}
 
 
 def run(*args):
@@ -123,6 +124,16 @@ def main():
         require(abs(client_minor - server_minor) <= 1, "kubectl 与 API Server 超出支持的次版本偏差")
         deployment = kube(kubeconfig, "get", "deployment", args.deployment, "-n", args.namespace)
         require(deployment["metadata"]["namespace"] == args.namespace, "Deployment Namespace 不匹配")
+        if args.namespace in JAVA_SCHEDULED:
+            require(deployment["spec"].get("replicas", 1) <= 1
+                    and deployment["spec"].get("strategy", {}).get("type") == "Recreate",
+                    "Java 进程内定时任务 API 必须单副本 Recreate")
+            binding = kube(kubeconfig, "get", "validatingadmissionpolicybinding",
+                           f"ruishi-java-singleton-{args.namespace}")
+            require(binding["spec"].get("policyName") == "ruishi-java-scheduler-singleton"
+                    and binding["spec"].get("matchResources", {}).get("namespaceSelector", {})
+                    .get("matchLabels", {}).get("kubernetes.io/metadata.name") == args.namespace,
+                    "Java 定时任务准入保护缺失")
         template = deployment["spec"]["template"]
         if args.image:
             containers = template["spec"]["containers"]
@@ -132,7 +143,7 @@ def main():
             require(proposed_repository == current_repository, "拟发布镜像仓库与现网不一致")
         selected = template.get("metadata", {}).get("annotations", {}).get(ANNOTATION)
         expected = {row["id"] for row in inventory["vswitches"]}
-        if item["state"] == "already-on-nat":
+        if item["state"] in ("already-on-nat", "zero-replica-new-template"):
             require(selected is not None and len(selected.split(",")) == 2
                     and set(selected.split(",")) == expected, "现网模板选址偏离新网段")
             profile = kube(kubeconfig, "get", "configmap", "acs-profile", "-n", "kube-system")
@@ -152,8 +163,12 @@ def main():
                 require(selector.get("matchLabels", {}).get("kubernetes.io/metadata.name") == args.namespace,
                         f"准入 Binding 范围异常：{name}")
             pods = kube(kubeconfig, "get", "pods", "-n", args.namespace)["items"]
-            target_pods = [pod for pod in pods if pod["metadata"]["name"].startswith(args.deployment + "-")]
-            require(bool(target_pods), "目标没有运行 Pod；零副本需专项发布流程")
+            target_pods = [pod for pod in pods if pod["metadata"]["name"].startswith(args.deployment + "-")
+                           and pod.get("status", {}).get("phase") not in ("Succeeded", "Failed")]
+            if deployment["spec"].get("replicas", 1) == 0:
+                require(not target_pods, "零副本目标仍有活动 Pod")
+            else:
+                require(bool(target_pods), "运行目标没有 Pod")
             networks = [ipaddress.ip_network(row["cidr"]) for row in inventory["vswitches"]]
             for pod in target_pods:
                 ip = pod.get("status", {}).get("podIP")

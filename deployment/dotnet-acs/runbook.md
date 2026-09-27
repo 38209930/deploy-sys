@@ -23,7 +23,7 @@
 
 ## 1. 公共 NAT 出口准备
 
-网络阶段已通过阿里云 API 完成，实际路由、NAT、EIP、两个新 Pod vSwitch 的 SNAT 和双区私网/公网诊断见[2026-09-26 实施记录](egress-nat-execution-2026-09-26.md)。七个旧 vSwitch 已关联无默认路由的旧业务表；系统表只承载 NAT 专用 vSwitch。AI、售后、积分及 Yangu/M1X 有角色迁入新网段的历史记录；其他 Java/.NET 角色的实时位置须重新读回。售后 Worker 已启动，不能再按零副本处理。项目接入前须完成[公共 NAT 出口手册](egress-nat.md)要求的外呼、旧短信通道、任务副作用、第三方白名单和告警核验；逐项目验证真实 SDK 及供应商侧来源 IP，不能以诊断 `curl` 代替业务验收。
+网络阶段已通过阿里云 API 完成，实际路由、NAT、EIP、两个新 Pod vSwitch 的 SNAT 和双区私网/公网诊断见[2026-09-26 实施记录](egress-nat-execution-2026-09-26.md)。七个旧 vSwitch 已关联无默认路由的旧业务表；系统表只承载 NAT 专用 vSwitch。2026-09-27 已把新零售、经销商、STOPMP、ETBST、DDMP 的运行角色逐项迁至新网段；Yangu、M1X API/Worker、积分 Back/Worker 原已在新网段，DGYE/VET 保持零副本但模板已更新。各 Namespace 的默认选址和准入保护及当前读回见[统一出口执行记录](egress-release-execution-2026-09-27.md)。售后 Worker 已启动，不能再按零副本处理。后续发布前运行[只读出口检查](egress-release-check.py)；逐项目验证真实 SDK 和供应商侧来源 IP，不能以诊断 `curl` 代替业务验收。
 
 北京跨可用区 NAT 账号报价为 ¥0.1955/小时（当前优惠价；官方标价 ¥0.23/小时），另计 EIP 保有、NAT 处理量和公网出流量；10 Mbps 是 EIP 初始上限。未对现有混用的 ACS `/20` 网段创建整段 SNAT；接入具体项目时再复核带宽和实际账单。
 

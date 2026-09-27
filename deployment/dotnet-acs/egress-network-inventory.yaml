@@ -40,17 +40,17 @@ namespaces:
     state: already-on-nat
     deployments: [agent-query-api]
   stopmp-api:
-    state: pending-migration
+    state: already-on-nat
     deployments: [stopmp-api]
   etbst-api:
-    state: pending-migration
+    state: already-on-nat
     deployments: [etbst-api]
   ddmp-api:
-    state: pending-migration
+    state: already-on-nat
     deployments: [ddmp-api]
   dgye-api:
-    state: zero-replica
+    state: zero-replica-new-template
     deployments: [dgye-api]
   vet-api:
-    state: zero-replica
+    state: zero-replica-new-template
     deployments: [vet-api]

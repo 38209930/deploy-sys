@@ -1,5 +1,5 @@
 # 集群共用规则；先在诊断 Namespace 绑定验证，再按网络清单逐 Namespace 绑定。
-# 不要创建覆盖旧网段项目或系统 Namespace 的通配 Binding。
+# 按已迁移的业务 Namespace 逐项绑定；不覆盖系统 Namespace 或范围外资源。
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
