@@ -45,11 +45,11 @@ def env(**values):
 
 
 def entry(sid, name, kind, command, status=None):
-    commands = {"run": [f"cd {ROOT}", command]}
+    target = {"shell": "bash", "commands": {"run": [f"cd {ROOT}", command]}}
     if status:
-        commands["status_commands"] = [f"cd {ROOT}", status]
+        target["status_commands"] = [f"cd {ROOT}", status]
     return {"id": sid, "name": name, "type": kind,
-            "targets": {"prod": {"shell": "bash", "commands": commands}}}
+            "targets": {"prod": target}}
 
 
 def main():
@@ -92,10 +92,14 @@ def main():
             status = env(FLOW_PIPELINE_ID=build_id, FLOW_SERVICE=sid) + " bash scripts/flow-release.sh status"
             push = env(FLOW_PIPELINE_ID=build_id, FLOW_SERVICE=sid, FLOW_REPO_DIR=row["repo_dir"],
                        FLOW_RELEASE_BRANCH=branch) + " bash scripts/flow-release.sh push"
-            build = env(FLOW_PIPELINE_ID=build_id, FLOW_DEPLOY_PIPELINE_ID=confirm_id,
-                        FLOW_RELEASE_BRANCH=branch, FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn",
-                        FLOW_ACR_REPO_ID=row["acr_id"], FLOW_IMAGE_REPO=image_repo, FLOW_SERVICE=sid,
-                        FLOW_DEPLOY_MODE="local") + " bash scripts/flow-release.sh build"
+            build_values = dict(FLOW_PIPELINE_ID=build_id, FLOW_DEPLOY_PIPELINE_ID=confirm_id,
+                                FLOW_RELEASE_BRANCH=branch, FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn",
+                                FLOW_ACR_REPO_ID=row["acr_id"], FLOW_IMAGE_REPO=image_repo,
+                                FLOW_SERVICE=sid, FLOW_DEPLOY_MODE="local")
+            if row["kind"] == "java":
+                # Java 多模块首次构建的依赖解析可能接近默认的一小时本地等待上限。
+                build_values["FLOW_BUILD_TIMEOUT"] = 7200
+            build = env(**build_values) + " bash scripts/flow-release.sh build"
             deploy = env(FLOW_DEPLOY_PIPELINE_ID=confirm_id, FLOW_SERVICE=sid, FLOW_DEPLOY_MODE="local",
                          FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn", FLOW_ACR_REPO_ID=row["acr_id"],
                          FLOW_IMAGE_REPO=image_repo, FLOW_NAMESPACE=row["namespace"],

@@ -13,8 +13,10 @@ def verify(run_detail, tags, branch):
     if len(sources) != 1 or sources[0].get("data", {}).get("branch") != branch:
         raise ValueError("构建源码不是唯一的目标分支源")
     commits = json.loads(sources[0]["data"]["commint"])
-    if len(commits) != 1:
-        raise ValueError("无法确定唯一源码提交")
+    if not commits:
+        raise ValueError("流水线没有源码提交")
+    # 云效对较长分支返回最近多条提交；首条是本次检出的 HEAD。
+    # 镜像 tag 必须与首条提交匹配，不能匹配历史中的其他提交。
     commit = commits[0]["commitId"]
     if not re.fullmatch(r"[0-9a-f]{40}", commit):
         raise ValueError("源码提交格式无效")

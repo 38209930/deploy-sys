@@ -30,4 +30,5 @@ stages:
               namespace: ruishi-dotnet-prod
               dockerRegistry: agent-query-api
               dockerTag: "${DATETIME}-${CI_COMMIT_ID}"
+              contextPath: .
               dockerfilePath: AgentQuery.DealerQuery/Dockerfile

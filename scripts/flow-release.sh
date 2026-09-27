@@ -182,11 +182,17 @@ cmd_build() {
   check_identity
   require_pipeline
   local resp run_id
-  resp="$(flow StartPipelineRun --pipelineId "$FLOW_PIPELINE_ID" --body '{}')" \
-    || fail "触发流水线失败（检查流水线 ID 与权限）"
-  run_id="$(json_get "$resp" "d['pipelineRunId']")"
-  [ -n "$run_id" ] || fail "未取到 pipelineRunId: $resp"
-  echo "build_triggered pipeline_id=$FLOW_PIPELINE_ID run_id=$run_id"
+  if [ -n "${FLOW_BUILD_RUN_ID:-}" ]; then
+    [[ "$FLOW_BUILD_RUN_ID" =~ ^[0-9]+$ ]] || fail "FLOW_BUILD_RUN_ID 不是数字"
+    run_id="$FLOW_BUILD_RUN_ID"
+    echo "build_resuming pipeline_id=$FLOW_PIPELINE_ID run_id=$run_id"
+  else
+    resp="$(flow StartPipelineRun --pipelineId "$FLOW_PIPELINE_ID" --body '{}')" \
+      || fail "触发流水线失败（检查流水线 ID 与权限）"
+    run_id="$(json_get "$resp" "d['pipelineRunId']")"
+    [ -n "$run_id" ] || fail "未取到 pipelineRunId: $resp"
+    echo "build_triggered pipeline_id=$FLOW_PIPELINE_ID run_id=$run_id"
+  fi
   echo "pipeline_url=$(pipeline_url)"
   local rc=0
   wait_run "$run_id" || rc=$?
@@ -361,7 +367,7 @@ import sys
 from pathlib import Path
 
 for line in Path(sys.argv[1]).read_text().splitlines():
-    if re.search(r"<[^<>]+>", line.split("#", 1)[0]):
+    if re.search(r"<[A-Z][A-Z0-9_]*>", line.split("#", 1)[0]):
         sys.exit(0)
 sys.exit(1)
 PY

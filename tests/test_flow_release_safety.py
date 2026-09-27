@@ -18,6 +18,16 @@ def load(name, filename):
 
 evidence = load("flow_evidence", "flow-build-evidence.py")
 deploy = load("acs_deploy", "acs-image-deploy.py")
+menus = load("flow_menus", "sync-flow-menus.py")
+
+
+class FlowMenuTests(unittest.TestCase):
+    def test_status_command_is_on_target_for_gui_and_cli(self):
+        item = menus.entry("flow-api-build", "API Flow 构建", "java", "echo build", "echo status")
+        target = item["targets"]["prod"]
+        self.assertEqual(target["commands"]["run"][-1], "echo build")
+        self.assertEqual(target["status_commands"][-1], "echo status")
+        self.assertNotIn("status_commands", target["commands"])
 
 
 class BuildEvidenceTests(unittest.TestCase):
@@ -39,6 +49,14 @@ class BuildEvidenceTests(unittest.TestCase):
 
     def test_duplicate_tag_is_rejected(self):
         self.tags["Images"].append(dict(self.tags["Images"][0]))
+        with self.assertRaises(ValueError):
+            evidence.verify(self.run, self.tags, "product/new-retail")
+
+    def test_commit_history_uses_checked_out_head_only(self):
+        commits = [{"commitId": self.commit}, {"commitId": "c" * 40}]
+        self.run["pipelineRun"]["sources"][0]["data"]["commint"] = json.dumps(commits)
+        self.assertEqual(evidence.verify(self.run, self.tags, "product/new-retail")[0], self.commit)
+        self.tags["Images"][0]["Tag"] = "20260927-cccccccc"
         with self.assertRaises(ValueError):
             evidence.verify(self.run, self.tags, "product/new-retail")
 

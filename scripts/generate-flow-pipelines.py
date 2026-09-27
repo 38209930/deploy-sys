@@ -19,6 +19,9 @@ def main():
     for service in services:
         sid = service["id"]
         dockerfile = service["dockerfile"]
+        # Flow 默认以 Dockerfile 所在目录为构建上下文；多项目 .NET Dockerfile
+        # 需要从仓库根目录 COPY 同级项目。
+        context_path = "              contextPath: .\n" if "/" in dockerfile else ""
         namespace = "ruishi-java-prod" if service["kind"] == "java" else "ruishi-dotnet-prod"
         prep = ""
         if service["kind"] == "java":
@@ -31,6 +34,15 @@ def main():
                 test \"$(grep -c 'ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com' {dockerfile})\" -eq 2
                 sed 's#ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com#ruishi-prod-registry.cn-beijing.cr.aliyuncs.com#g' {dockerfile} > Dockerfile.flow
                 test \"$(grep -c 'ruishi-prod-registry.cn-beijing.cr.aliyuncs.com' Dockerfile.flow)\" -eq 2
+"""
+            if sid == "m1x-api":
+                # 冷构建超过一小时，ACR 推送时授权已过期；只调整此构建的临时文件。
+                prep += """                cat > flow-maven-settings.xml <<'SETTINGS'
+                <settings><mirrors><mirror><id>aliyun-public</id><mirrorOf>central</mirrorOf><url>https://maven.aliyun.com/repository/public</url></mirror></mirrors></settings>
+                SETTINGS
+                awk '/^RUN mvn / { print "COPY flow-maven-settings.xml /tmp/flow-maven-settings.xml"; sub(/^RUN mvn /, "RUN mvn -s /tmp/flow-maven-settings.xml ") } { print }' Dockerfile.flow > Dockerfile.flow.tmp
+                mv Dockerfile.flow.tmp Dockerfile.flow
+                test "$(grep -c '^RUN mvn -s /tmp/flow-maven-settings.xml ' Dockerfile.flow)" -eq 1
 """
             dockerfile = "Dockerfile.flow"
         build = f"""# pipeline-name: {sid}-手动构建
@@ -65,7 +77,7 @@ stages:
               namespace: {namespace}
               dockerRegistry: {sid}
               dockerTag: "${{DATETIME}}-${{CI_COMMIT_ID}}"
-              dockerfilePath: {dockerfile}
+{context_path}              dockerfilePath: {dockerfile}
 """
         deploy = f"""# pipeline-name: {sid}-固定digest人工确认
 # Flow 的 kubectl 1.27.9 不适配 ACS 1.36.1；确认后由本机 kubectl 执行镜像更新。

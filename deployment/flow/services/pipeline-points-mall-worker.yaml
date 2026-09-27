@@ -30,4 +30,5 @@ stages:
               namespace: ruishi-dotnet-prod
               dockerRegistry: points-mall-worker
               dockerTag: "${DATETIME}-${CI_COMMIT_ID}"
+              contextPath: .
               dockerfilePath: Visionisok.Worker/Dockerfile
