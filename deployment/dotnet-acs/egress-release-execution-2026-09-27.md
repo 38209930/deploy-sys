@@ -10,16 +10,29 @@
 4. 在 `kube-system/acs-profile` 第一条 selector 增加对 `ai-study`、`service-order`、`points-mall`、`yangu-api`、`m1x-api` 的按 Namespace 匹配，新 Pod 默认选择两个 NAT vSwitch；保留原 `legacy-vswitch-default` 作为后续兜底。先用诊断 Namespace 的真实无注解 Pod 验证注入，再以资源版本校验更新现网。**服务端干跑不会展示 ACS 创建后的注入结果，不能以干跑输出缺注解误判失败。**
 5. 对上述五个 Namespace 分别安装 Deployment 与 Pod 两条 Binding，合计十条，无通配 Binding。生产干跑核对：旧模板被拒、两个新 vSwitch 调换顺序通过、Pod 显式旧选址被拒。实际短期无注解 Pod 经 ACS 注入新选址，已删除。五个 Namespace 的现有业务 Deployment 均在变更前核实显式使用两个新 vSwitch，故此阶段未重启业务 Pod。
 6. 新增[统一网络清单](egress-network-inventory.yaml)和[只读发布检查脚本](egress-release-check.py)。脚本从云 OpenAPI、临时 ACS 凭据和 Kubernetes API 实时核对账号、NAT/EIP、SNAT、vSwitch、路由、kubectl 版本、模板、默认 selector、Binding、运行 Pod IP。它不读取 Secret 值，不修改生产对象。对五个已迁 Namespace 的抽样检查通过；对 `new-retail` 传入镜像发布参数时按“未迁移”阻断。
+7. 获授权后，先核对新零售生产短信路由：SmsCore 已启用且使用 `172.27.182.18`，创蓝、云瓣、阿里云旧通道均禁用；此次只读核对未写数据库。按 Front → Back → Worker，逐个仅修改 Pod 模板 vSwitch 注解并保留镜像、Secret 引用和副本数。Front 首次新 Pod 已在 `172.31.240.162` Ready，但正式入口短暂返回 503；原因未从 ALB 访问日志证实，时间上与后端同步窗口相符。早期脚本随即回退原选址，入口恢复 200。改进为等待 120 秒并要求连续三次正式入口成功后，重新迁移成功：Front `172.31.240.166`、Back `172.31.240.167`、Worker `172.31.240.168`，均 1/1 Ready；Worker 为 Recreate、旧 Pod 已退出、当前重启 0 次。Front/Back 的 `/health/ready` 返回 200，Worker 近 15 分钟日志无错误特征，但**真实任务结果和 24 小时观察尚未完成**。首次迁移的短暂 503 应纳入后续维护窗口安排。
+8. 经销商 `agent-query-api` 迁至 `172.31.240.169`，1/1 Ready；`rsqapi-bk.svision100.com/health/ready` 返回 200。新零售、经销商均已加入 `acs-profile` 新网段默认 selector，各建 Deployment/Pod 两条按 Namespace 限定的准入 Binding；服务端干跑实测旧 vSwitch 被拒、两个新 vSwitch 调换顺序通过。相应[迁移脚本](egress-migrate-one.py)、[保护脚本](egress-protect-namespace.py)及网络清单已同步。两项目的只读发布检查通过。真实外呼业务记录与 24 小时观察仍待完成，不能据此宣称业务全量验收。
+
+迁移后 Deployment 读回标识（resourceVersion 是采样值，后续发布须实时重读）：
+
+| Namespace / Deployment | UID | generation | resourceVersion |
+|---|---|---:|---:|
+| `new-retail/new-retail-front` | `013ea972-c04a-47e9-9297-5a9334d406c1` | 8 | 1927113 |
+| `new-retail/new-retail-back` | `6ba0bd81-8f93-4780-9f5f-19d7df2a2b1c` | 7 | 1927603 |
+| `new-retail/new-retail-worker` | `74e472c4-88ef-4c42-a811-1a75377a22cf` | 5 | 1928874 |
+| `agent-query/agent-query-api` | `4b44c023-f11e-43a3-a461-2dc566127f5d` | 12 | 1929451 |
 
 ## 当前网络分组和下一步
 
 | 组 | Deployment | 本轮处理 |
 |---|---|---|
-| 已在 NAT，新默认及准入已启用 | AI Back/Worker；售后 Front/Back/Worker；积分 Back/Worker；Yangu API；M1X API/Worker | 无业务 Pod 重建；以后发布用实时检查 |
-| 旧网段待迁 | 新零售 Front、Back、Worker；经销商 `agent-query-api`；STOPMP、ETBST、DDMP | 保持旧选址、现有副本和现有入口；未加会阻断紧急发布的 Binding |
+| 已在 NAT，新默认及准入已启用 | AI Back/Worker；售后 Front/Back/Worker；积分 Back/Worker；Yangu API；M1X API/Worker；新零售 Front/Back/Worker；经销商 API | 新零售、经销商本轮已重建并通过入口检查；其他五 Namespace 本轮未重建 |
+| 旧网段待迁 | STOPMP、ETBST、DDMP | 保持旧选址、现有副本和现有入口；未加会阻断紧急发布的 Binding |
 | 零副本 | DGYE、VET | 保持零副本；恢复前另做业务及网络核对 |
 
-迁移顺序仍为 **新零售 Front → Back → Worker → 经销商 → STOPMP → ETBST → DDMP**，一次只改一个 Deployment。当前停止在迁移门槛：新零售缺生产生效短信路由与旧供应商禁用证据、微信/支付平台来源 IP 要求和 Worker 唯一执行证据；经销商缺地图等实际公网调用确认；STOPMP/ETBST/DDMP 缺逐项目启用外呼及短信路由核对。没有这些证据，不能把诊断 Pod 的成功当作生产应用验收。已迁项目的真实短信受理和供应商结果也仍需自然业务或经单独授权的测试记录。
+固定迁移顺序为 **新零售 Front → Back → Worker → 经销商 → STOPMP → ETBST → DDMP**，前四项已完成网络迁移。STOPMP/ETBST/DDMP 的生产生效短信路由、旧供应商禁用及启动任务仍需逐项核对；其现有 `RollingUpdate` 单副本策略会在更新时短暂出现两个 Pod，不能把它当成任务唯一性保证。已迁项目的真实短信受理、外呼平台白名单和业务结果仍需自然业务或经单独授权的测试记录。诊断 Pod 成功仅证明网络路径。
+
+只读检查三仓 `origin/release` 的 `SchedulingConfig`：STOPMP 的每日零点扣费任务无配置开关；ETBST 仅在 `etbst.scheduling.card-deduction-enabled=true` 时启用；DDMP 的 `ddmp.scheduling.card-deduction-enabled` 缺省为启用。现网镜像是否与该源码版本一致、运行时实际标志值以及任务是否有跨实例锁，仍需针对镜像与运行配置核对。尤其 STOPMP 不得在零点附近通过 RollingUpdate 制造双 Pod；若业务要求严格单执行，迁移前须先确定安全交接方式。
 
 现有运维记录曾把“告警触达已验证”列为新零售前置项，但生产告警渠道尚未确定。迁移窗口可由明确值班人员连续观察替代自动告警门槛；当前尚未指定人员，不宣称已有无人值守保障。24 小时观察和关键任务周期未完成的项目不得标记迁移关闭。
 
@@ -39,4 +52,4 @@ ETBST 云效部署流水线当前 `kubectlVersion: 1.27.9`，集群 API Server �
 
 ## 尚未达到的完成条件
 
-七个旧网段运行 Pod 还未迁移，逐项目外呼/短信/任务验收和迁移后的 24 小时观察仍未完成。因此本次只完成双区验证与**已在 NAT 的五个 Namespace 防回退保护**，不能标注“所有业务已统一出口”。后续迁移先闭合上述已列门槛，再按单项目变更记录执行；DGYE、VET 不启动。
+三个 Java 运行 Pod 仍在旧网段，逐项目外呼/短信/任务验收和新迁项目的 24 小时观察未完成。因此不能标注“所有业务已统一出口”。后续迁移按单项目变更记录执行；DGYE、VET 不启动。

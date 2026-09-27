@@ -34,10 +34,10 @@ namespaces:
     state: already-on-nat
     deployments: [m1x-api, m1x-worker]
   new-retail:
-    state: pending-migration
+    state: already-on-nat
     deployments: [new-retail-front, new-retail-back, new-retail-worker]
   agent-query:
-    state: pending-migration
+    state: already-on-nat
     deployments: [agent-query-api]
   stopmp-api:
     state: pending-migration
