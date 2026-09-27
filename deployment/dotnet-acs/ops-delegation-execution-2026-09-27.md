@@ -43,7 +43,7 @@ Deployment 镜像 `sha256:a80e8b0e…187474`（ruishi-dotnet-prod/service-order-
 
 10:18:30 一条真实售后通知短信（业务事件 `102734:Pass:910***…:BUYER_RECEIVED:WAIT_BUYER_RETURN_GOODS`，模板 `102734-ChangeGoods-Pass-2`，手机号应用侧已自脱敏）发送失败：**SmsCore 以 401 `auth.ip_not_allowed` 拒绝来源 `172.31.240.149`**。此前网络层 TCP 验证通过，但 SmsCore 应用层白名单只含旧网段，未含 `172.31.240.0/24`、`172.28.64.0/24`。影响范围：**所有已迁新网段项目的短信发送**（售后、AI、积分）；AI/积分近期无发送行为故未在日志显现，缺陷是确定性的。重试 2 条已于 10:29 进入终态（该 2 条通知未送达，需业务侧评估是否人工补发——补发属业务动作，运维不触发）。
 
-**所需修复（待授权）**：在 SmsCore 侧（ECS `i-2ze38hdx1sufodad2kz0`，172.27.182.18:3090）的来源白名单中加入两个新 Pod 网段 CIDR；属 SmsCore 配置变更，不在本任务授权范围内。修复后验证方式：等待下一个真实补偿事件自然通过，或由业务所有人发起一条真实测试短信，不以运维身份触发。
+**后续处置（11:26 更新）**：管理员已授权并完成两条新 Pod 网段白名单写入，详情见文末“授权变更补记”。这只解除 `auth.ip_not_allowed` 的已知阻断；仍须等待下一条自然业务短信，或由业务所有人发起测试短信，核对 SmsCore 受理和供应商结果。终态的历史通知不得由运维自动补发。
 
 **正向证据**：错误报文显示该应用启用的短信通道集合为**仅 `ruishi:SmsCore`**（"全部通道发送失败"仅列出该通道）——售后项目旧直连通道（创蓝/云瓣）未生效，这是 C 项门槛所需的非秘密证据之一（其余项目仍需逐一取证）。
 
@@ -68,7 +68,7 @@ Pod 位置 11:0x 读回（副本/重启全部正常）：STOPMP `172.31.239.13`�
 - **对象**：`new-retail/new-retail-front` → `new-retail-back` → `new-retail-worker`（一次只迁一个，前一结论形成后再下一个）。
 - **当前注解**：三个 Deployment 的 `network.alibabacloud.com/vswitch-ids` 均为**无**（运行时由 acs-profile 兜底落旧 k）；**回滚值=移除该注解**。
 - **目标注解**：`vsw-2zevd832gq3313j6gv5sj,vsw-2zesy6off4gy39tqripzp`。镜像/配置/副本/Ingress/Service 不变。
-- **执行前置门槛（未满足不执行）**：① 售后同款 SmsCore 白名单修复已生效（新网段短信可用）；② 微信支付侧确认无需商户 IP 白名单或已完成配置；③ Worker（new-retail-worker）确认旧 ECS Worker 无自启、任务幂等；④ D 项告警触达测试通过（任务书要求）。
+- **执行前置门槛（未满足不执行）**：① 新网段 SmsCore 白名单已写入，但实际短信成功证据仍待取得；② 微信支付侧确认无需商户 IP 白名单或已完成配置；③ Worker（new-retail-worker）确认旧 ECS Worker 无自启、任务幂等；④ D 项告警触达测试通过（任务书要求）。
 - **验证清单**：新 Pod IP ∈ 两新 /24；出站来源=39.96.67.239；MySQL/Redis/Mongo/SmsCore 私网可用；真实 SDK 低风险调用（如登录、查单）或业务脱敏结果；`ns-front/ns-back` Host 基线 200；24 小时观察。
 - STOPMP/ETBST/DDMP/经销商：无变更单——判定为待证据，取得实际启用公网调用清单（经授权的配置只读导出或业务确认）后再定。
 
@@ -84,14 +84,16 @@ Pod 位置 11:0x 读回（副本/重启全部正常）：STOPMP `172.31.239.13`�
 
 | # | 资源/指标 | 条件（CMS 可实现形式） | 级别 | 备注 |
 |---|---|---|---|---|
-| 1 | ALB `DualStack_ListenerHTTPCode5XX`（acs_alb，实例 alb-olyb9…） | 5 分钟 Sum > 20 | P1 | CMS 不支持"错误率>2% 且请求数>100"复合条件——按任务书拆分：本条为主；请求数条件由值班人工结合 QPS 判断；量小误报用 30 分钟连续 2 周期抑制 |
-| 2 | NAT `BWRateOutToOutside`（acs_nat_gateway，ngw-2zet…） | 5 分钟 Average > 7 Mbps（8,750,000 bps） | P2 | 对应 10 Mbps 上限 70% 预警 |
+| 1 | ALB `DualStack_ListenerHTTPCode5XX`（acs_alb，实例 alb-olyb9…） | 目标为 5 分钟 5XX 请求数 > 20；API 阈值待换算 | P1 | 该指标官方单位为 Count/s，不能直接把 5 分钟 `Sum > 20` 当作请求总数。先用历史窗口验证 CMS 聚合值与真实计数的换算，再写规则；低流量抑制也须用实际可配置能力核对。 |
+| 2 | NAT `BWRateOutToOutside`（acs_nat_gateway，ngw-2zet…） | 5 分钟 Average > 7 Mbps（7,000,000 bps） | P2 | 对应 10 Mbps 上限 70% 预警；原文 8,750,000 bps 为算术错误，已修正。 |
 | 3 | NAT 同指标 | 5 分钟 Average > 8.5 Mbps 且有业务失败 | P1 | CMS 无复合条件，升级路径为人工（收到 P2 后查业务失败率） |
 | 4 | NAT `ErrorPortAllocationRate` | > 0 持续 1 周期 | P1 | 端口分配失败即异常 |
 | 5 | NAT `DropTotalPps` | > 0 持续 3 周期 | P2 | 丢包趋势 |
 | 6 | Pod 非 Ready / 重启增加、内存 >80% limit | **CMS 不支持 K8s 指标**；metrics-server 已就绪但无告警链路 | — | 两条实现路径：a) 值班每日巡检 + 扩展 resource-snapshot.sh 输出超限清单（零成本，已可用）；b) 接入 ARMS Promethues 告警（集群已存在 CMS Prometheus workspace，接入状态待证据，可能产生费用）。建议先 a 后评估 b |
 | 7 | 售后 Worker 到期任务无完成、失败队列增长 | 需应用日志进 SLS（付费）或业务系统侧告警 | P1 | 待授权与业务侧方案 |
 | 8 | EIP 带宽（等同 #2，同源指标） | 同 #2 | — | 与 #2 合并实施 |
+
+指标单位按[阿里云 ALB 监控说明](https://help.aliyun.com/en/slb/application-load-balancer/alb-monitoring-and-alerting)与[公网 NAT 监控说明](https://help.aliyun.com/en/nat-gateway/user-guide/view-monitoring-data)复核。规则表是实施草案，尚无联系人验证或写入授权。
 
 ### 待授权清单（D 项）
 
@@ -104,8 +106,20 @@ Pod 位置 11:0x 读回（副本/重启全部正常）：STOPMP `172.31.239.13`�
 | 项 | 结论 | 下一步责任人 |
 |---|---|---|
 | A ALB 5XX | **通过（含证据上限说明）**：三个峰值窗口全部定位时间线；因访问日志未启用，Host 级归因不可追溯；无现存问题 | 运维（已交付）；日志启用待管理员决策 |
-| B 售后 Worker | **阻断（业务层）**：调度层通过、镜像链闭合；SmsCore 白名单拒绝新网段致真实短信失败并丢失 2 条 | 管理员授权 SmsCore 白名单修复；业务所有人对 10:18 事件与 10:30 ERP 补偿做结果确认；运维 09-28 00:21 后回填 24h 与 JuShuiTanToken |
-| C 旧网段出口 | **待证据/待授权**：新零售需迁移（P1）但门槛未满足；其余四项目待证据 | 业务所有人对 STOPMP/ETBST/DDMP/经销商做公网调用清单确认；管理员对售后短信白名单与告警触达放行后逐单执行 |
+| B 售后 Worker | **部分通过，业务层待验收**：调度层通过、镜像链闭合；SmsCore 两条新网段白名单已补，实际新短信受理及历史失败通知的业务处理仍待确认 | 业务所有人核对历史终态通知与 10:30 ERP 补偿结果；运维 09-28 00:21 后回填 24h 与 JuShuiTanToken |
+| C 旧网段出口 | **待证据/待授权**：新零售需迁移（P1）但门槛未满足；其余四项目待证据 | 业务所有人对 STOPMP/ETBST/DDMP/经销商做公网调用清单确认；新网段短信实际成功、告警触达等门槛通过后逐单执行 |
 | D 告警 | **阻断（无接收人、通道未验证、规则 0 条）**；可实施规则表已提交 | 管理员提供接收人与写入授权 |
 
 停手条件遵守情况：未改共享网络、未扩大 SNAT、未读 Secret、未触发短信/资金、未为测试制造错误。本轮唯一生产写操作为已授权的 managed-metrics-server 安装（前序记录）。
+
+## 授权变更补记：SmsCore 新网段白名单（2026-09-27 11:26 CST）
+
+管理员在本次会话中明确授权：仅在 SmsCore 生产库 `sms_ip_whitelists` 新增并启用 `172.31.240.0/24`、`172.28.64.0/24`，保留旧规则，不主动补发短信。经私网 SSH 到 SmsCore ECS `i-2ze38hdx1sufodad2kz0`，一次性程序在服务器内存中使用现有运行配置建立数据库连接；连接串和密钥未输出或复制。写前全量规则快照保存于该 ECS 的 `/root/ops-snapshots/smscore-whitelist-20260927.json`（权限 600）。
+
+- 写前：19 条规则，两条目标 CIDR 均不存在。
+- 事务写入后独立读回：21 条规则；两条目标规则 `app_id=''`、`ip_type='internal'`、`enabled=1`，各一条；旧 19 条逐字段不变。
+- SmsCore PublicApi `127.0.0.1:3090/health/ready` 返回 200。未发送短信、未重启服务、未修改 NAT 或项目配置。
+- 该白名单为**全局来源规则**：两个网段内的请求可通过 IP 门槛，但仍须通过 SmsCore 应用 API Key、HMAC、时间戳和 nonce 校验。尚无变更后的真实短信受理或供应商投递证据；对已进入终态的两条历史通知不作自动重试。
+- 原报告有一条可定位的 `auth.ip_not_allowed` 请求和两条重试队列终态记录；两条队列项是否对应两个独立短信事件、是否需要补发，须由业务记录按事件 ID 核对，不能仅凭队列数量断言“两名用户均未收到短信”。
+
+本补记为原委托任务收尾后的独立授权变更；上文 10:18 的故障及原任务“只读取证”口径均作为历史事实保留。
