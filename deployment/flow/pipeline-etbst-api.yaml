@@ -8,7 +8,7 @@
 #   <ACR_SC>     容器镜像服务（企业版实例 cri-73ffxebpi6ruw6sn）服务连接 ID
 #   <ACK_SC>     容器服务 Kubernetes 集群（cebc88343a44b4d759aa983a47b787835）服务连接 ID
 #
-# 注意：构建/部署步骤的 step 标识符以云效「YAML 步骤清单」为准；apply 校验报错时按错误信息调整。
+# ACR 企业版构建及 Kubernetes 镜像更新步骤已按云效官方步骤清单核对；digest 传递仍待验证。
 
 sources:
   etbst_repo:
@@ -27,24 +27,20 @@ stages:
     jobs:
       build_job:
         name: etbst-api-镜像
-        runsOn:
-          group: public/cn-beijing
+        runsOn: public/cn-beijing
         steps:
           acr_push:
             name: 构建镜像并推送ACR企业版
-            step: <ACR构建推送步骤>      # 仓库根 Dockerfile 多阶段构建，linux/amd64
+            step: ACREEDockerBuild   # 仓库根 Dockerfile 多阶段构建
             with:
-              dockerRegistry: ruishi-prod-registry.cn-beijing.cr.aliyuncs.com
-              dockerRepository: ruishi-java-prod/etbst-api
-              dockerTag: "${DATETIME}-${CI_COMMIT_ID}"   # Tag 不可变，禁止复用
               serviceConnection: <ACR_SC>
-          record_digest:
-            name: 记录镜像摘要
-            step: Command
-            with:
-              run: |
-                echo "commit=${CI_COMMIT_ID}" >> flow-release.txt
-                echo "image=ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api" >> flow-release.txt
+              region: cn-beijing
+              artifact: etbst_api_image
+              instance: ruishi-prod
+              namespace: ruishi-java-prod
+              dockerRegistry: etbst-api
+              dockerTag: "${DATETIME}-${CI_COMMIT_ID}"   # Tag 不可变，禁止复用
+              dockerfilePath: Dockerfile
 
   confirm_stage:
     name: 人工确认
@@ -58,13 +54,17 @@ stages:
     jobs:
       deploy_job:
         name: 更新ACS镜像
-        runsOn:
-          group: public/cn-beijing
+        runsOn: public/cn-beijing
         steps:
           k8s_set_image:
             name: 固定digest更新Deployment
-            step: <Kubernetes部署步骤>
+            step: KubectlSetImage
             with:
-              serviceConnection: <ACK_SC>
-              # 命名空间/Deployment/Service/Ingress 均为 etbst-api，只更新镜像字段
-              # 镜像引用固定 digest：ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api@sha256:...
+              kubernetesCluster: <ACK_SC>
+              kubectlVersion: "1.27.9"
+              namespace: etbst-api
+              workloadKind: deployment
+              workload: etbst-api
+              container: <ACS_CONTAINER_NAME>
+              # 必须传入构建后查询并校验的 digest 地址；不能传 ACR 步骤产出的 tag 地址。
+              artifact: <IMAGE_DIGEST_REF>

@@ -1,6 +1,6 @@
 # 交接：云效 Flow 发布命令接入（etbst-api 试点）
 
-日期：2026-09-27。操作仓库：deploy-sys，分支 `deploy/acs-acceptance-evidence`，提交 `4cd7811`、`e07a58d`（均已推送）。运维细节以 [../flow-release-commands.md](../flow-release-commands.md) 为准，本篇是任务交接：目标、进度、待办、问题。
+日期：2026-09-27。操作仓库：deploy-sys，分支 `deploy/acs-acceptance-evidence`。运维细节以 [../flow-release-commands.md](../flow-release-commands.md) 为准，本篇是任务交接：目标、进度、待办、问题。
 
 ## 一、任务目标
 
@@ -16,11 +16,12 @@
 **已完成：**
 
 - 现网只读核实（身份、云效组织、服务连接、etbst 仓库/Dockerfile/发布说明书、ACR/CS 权限现状），结论见 [../flow-release-commands.md](../flow-release-commands.md)。
-- devops API 冒烟全通：API 创建流水线 → API 触发运行 → 运行 SUCCESS → 删除（冒烟流水线 `5300139` 已清理）。
+- devops API 曾在旧组织完成创建流水线 → 触发运行 → SUCCESS → 删除的冒烟（流水线 `5300139` 已清理）。当前 svision100 组织已验证成员及只读 API，尚未创建正式流水线。
 - `scripts/flow-release.sh`：子命令 `push | build | deploy | status | apply`。STS 核验和云效 API 调用均显式使用 `--profile ruishi-prod-acr --region cn-beijing`；`deploy` 必须显式 `FLOW_CONFIRM=yes`；`apply` 会拒绝尚有占位符的 YAML；状态落盘 `data/flow-state/`（已 gitignore）。
-- 流水线 YAML 模板 `deployment/flow/pipeline-etbst-api.yaml`（源码核验阶段已验证可用；构建/部署阶段的 step 标识符与服务连接待回填）。
+- 流水线 YAML 模板 `deployment/flow/pipeline-etbst-api.yaml`（已按官方步骤清单核对 ACR 企业版构建和 Kubernetes 镜像更新的标识符及字段；服务连接、人工确认及 digest 传递待回填和验证）。
 - deploySys 本机注册：ETBST 项目下 `api-flow-push / api-flow-build / api-flow-deploy` 三个命令块（`config/projects.local.yaml`，私有不入库），流水线 ID 待填。
 - 文档：`deployment/flow-release-commands.md`、README 新章节、`config/projects.yaml` 模板注释。
+- `power-application-user` 已手动同步为 `svision100的代码库`（`659a5cefd64a2eb2dceb72f3`）的普通成员；`ListJoinedOrganizations`、`ListPipelines`、`ListServiceConnections` API 已可调用。发布脚本默认组织已纠正为该组织。
 - 仓库单测 27/28 过，1 个失败是本机 git 2.15 过旧（不支持 `git init -b`）的既有环境问题，与本次无关。
 
 **未完成（被授权卡住）：** 流水线正式创建、首次真实构建与上线验收。
@@ -29,32 +30,32 @@
 
 **A. 管理员控制台操作（一次性授权，CLI 无法代做）：**
 
-1. 云效控制台新建 **Codeup 服务连接**：授权须能访问 `ddmp/et-bst-api`（Codeup 组织 `659a5cefd64a2eb2dceb72f3`）；旧连接 `578243`（2024-01 建）对该仓库无权限。
-2. 新建 **容器镜像服务（企业版）服务连接**：北京实例 `cri-73ffxebpi6ruw6sn`。
-3. 新建 **Kubernetes（ACK/ACS）服务连接**：集群 `ruishi-prod-acs`（`cebc88343a44b4d759aa983a47b787835`）。
-4. 确认 `power-application-user` 对云效组织的成员资格及 API 权限：2026-09-27 用 `ruishi-prod-acr` 显式调用 `ListServiceConnections` 返回 `InvalidUser.NotFound`。请管理员核对该 RAM 用户是否已加入组织并授权，之后重新只读验证。
+1. 核验并取得可用于 `ddmp/et-bst-api` 的 **Codeup 服务连接**。svision100 所有的现有连接 `xdghn746erjk8hdo`（授权 `413656`）为“私密：仅自己可见”；`power-application-user` 查询 Codeup 连接列表为空，`GetRepository` 返回 `SYSTEM_NOT_FOUND_ERROR`，`ListRepositories` 搜索为空。需给该 RAM 成员最小必要仓库权限，或用已获授权的账号提供限定范围的连接。优先用阿里云 API；OAuth 授权若 API 无法完成，需授权账号操作。
+2. 核验现有 **ACR 服务连接** `o1gxp5wzksoe1mtu`（API ID `581029`）能否用于企业版实例 `cri-73ffxebpi6ruw6sn` 及目标流水线；不适用时创建专用连接。
+3. 创建 **Kubernetes（ACK/ACS）服务连接**：集群 `ruishi-prod-acs`（`cebc88343a44b4d759aa983a47b787835`）；`power-application-user` 查询 ACK 连接列表为空。
+4. 对服务授权和服务连接使用范围做最小权限核验，再以 API 回读确认。
 
 **B. 管理员完成 A 之后（AI 会话可继续执行）：**
 
-1. 把三个服务连接 ID 回填 `deployment/flow/pipeline-etbst-api.yaml` 占位符（`<CODEUP_SC>` / `<ACR_SC>` / `<ACK_SC>`），补齐 ACR 构建、Kubernetes 部署及人工确认的步骤定义，并确认构建产出的 digest 能传给部署步骤。当前 YAML 仍是骨架，不能直接 apply。
+1. 把三个服务连接 ID 回填 `deployment/flow/pipeline-etbst-api.yaml` 占位符（`<CODEUP_SC>` / `<ACR_SC>` / `<ACK_SC>`），补齐人工确认、实际容器名及构建产物 digest 的查询、校验和传递。当前 YAML 仍是骨架，不能直接 apply；云效镜像制品默认提供 tag 地址，不得直接用于要求固定 digest 的生产部署。
 2. `bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml` 创建流水线，把流水线 ID 填入 `config/projects.local.yaml`（替换 `__FLOW_PIPELINE_ID__`）并更新模板文档。
 3. 与管理员确认时机后跑首次真实构建：`push`（如需）→ `build` → 按仓库内 etbst 发布说明书（分支 `docs/etbst-acs-release-handbook-20260926`，`Doc/deployment/etbst-api-acs-release-runbook.md`）验收上线。
 4. 跑通后按 [../flow-release-commands.md](../flow-release-commands.md)「复制到其他项目」模板逐个接入，并在该文件登记流水线 ID。
 
 ## 四、遇到的问题和难点
 
-1. **旧 Codeup 服务连接无权限**：连接 `578243` 对 `ddmp/et-bst-api` 报"代码仓库不存在或者无权限"，创建流水线失败。Codeup 服务连接是 OAuth 授权，只能控制台重做，CLI 代建不了（`CreateServiceAuth` 仅支持 RAM 类型）。
-2. **权限现状需区分产品核验**：此前 ACR/CS 调用曾失败，疑似权限回退。2026-09-27 复核时，同一 Profile 调用 ACR `GetInstance` 成功，CS `DescribeClusterUserKubeconfig`（15 分钟临时配置）也成功；未显示或保存 kubeconfig。云效 `ListServiceConnections` 则返回 `InvalidUser.NotFound`。不能据此前失败推断 ACR/CS 当前仍被收权，当前明确阻塞是云效组织身份/权限及服务连接。
-3. **YAML step 标识符无权威可查**：云效官方文档只确认了 `JavaBuild`、`ArtifactUpload`、`Command` 等；"镜像构建并推送 ACR 企业版""Kubernetes 部署"的 YAML 标识符文档不可达，devops API 也不提供步骤清单。对策：apply 时借 YAML 校验报错迭代确认。
+1. **Codeup 授权归属**：旧组织连接 `578243` 对 `ddmp/et-bst-api` 报"代码仓库不存在或者无权限"；正确组织 `659a5cefd64a2eb2dceb72f3` 有另一条私密连接 `xdghn746erjk8hdo`，尚未验证能否访问该仓库。`CreateServiceAuth` API 仅支持 RAM，Codeup OAuth 授权不能由该 API 新建。
+2. **权限现状需区分产品核验**：此前 ACR/CS 调用曾失败；2026-09-27 同一 Profile 调用 ACR `GetInstance` 成功，CS `DescribeClusterUserKubeconfig`（15 分钟临时配置）也成功，未显示或保存 kubeconfig。云效组织成员资格已修复，剩余问题是服务授权及连接的目标实例、可见范围。
+3. **固定 digest 尚未打通**：云效官方步骤清单明确企业版镜像构建为 `ACREEDockerBuild`、Kubernetes 镜像更新为 `KubectlSetImage`，但构建步骤的标准镜像制品给出的是 tag 地址。需在部署前取得并校验 ACR digest，并确认能传给 `KubectlSetImage.artifact`；不能把 tag 地址当作固定 digest。
 4. **手动触发与代码源默认 webhook 的张力**：要求"push 不自动构建"，模板用 `triggerEvents: []`，创建后需回读配置确认没有残留 push 触发。
-5. **既有资料的两点澄清**：生产链路不是云效 Flow（是 ACR 云构建+手工 kubectl，本次正是要切到 Flow）；`docs/dgye_*实施手册` 里的 Flow 流水线只是规划，并未创建（现存 4 条流水线均为 2024 年测试线，coding.net 代码源）。
+5. **既有资料的两点澄清**：生产链路目前是 ACR 云构建+手工 kubectl，本次要切到 Flow；旧组织 `658d5b8ae7f9ce3ec8199dc0` 的 2024 年测试流水线不属于当前 `svision100` 组织，不能作为本试点的现有流水线。
 
 ## 五、关键常量速查
 
 | 项 | 值 |
 |---|---|
 | 阿里云账号 / RAM 用户 | `1442361567788059` / `power-application-user`（Profile `ruishi-prod-acr`，cn-beijing） |
-| 云效组织 | `ruishi365的企业`，OrganizationId `658d5b8ae7f9ce3ec8199dc0` |
+| 云效组织 | `svision100的代码库`，OrganizationId `659a5cefd64a2eb2dceb72f3` |
 | devops API 端点 | `devops.cn-hangzhou.aliyuncs.com`（CLI 必须显式 `--endpoint`） |
 | ACS 集群 | `ruishi-prod-acs`，`cebc88343a44b4d759aa983a47b787835` |
 | ACR 企业版实例 | `cri-73ffxebpi6ruw6sn`，Java 命名空间 `ruishi-java-prod` |

@@ -15,29 +15,36 @@
 - **不做 push 自动构建**：流水线手动触发，两种用法——`push`（先推送本地 release 分支）+ `build`（触发构建远端 release 当前提交），或只 `build`。
 - 本地命令：`scripts/flow-release.sh`，子命令 `push | build | deploy | status | apply`。
 - 认证：阿里云 CLI，显式 `--profile ruishi-prod-acr --region cn-beijing`（默认 Profile 属其他账号，禁止省略）；每次操作前 STS 核对账号 `1442361567788059`。凭据失效执行 `aliyun configure --profile ruishi-prod-acr`。
-- 云效组织：`ruishi365的企业`，OrganizationId `658d5b8ae7f9ce3ec8199dc0`（脚本已固化默认值）。
+- 云效组织：`svision100的代码库`，OrganizationId `659a5cefd64a2eb2dceb72f3`（脚本默认值；与 etbst Codeup 仓库相同组织）。
 
 ## 现网核实结论（2026-09-27）
 
 | 项 | 结论 |
 |---|---|
-| 云效组织 | 已开通，org `658d5b8ae7f9ce3ec8199dc0`；现有 4 条 2024 年测试流水线（yangu-train-test 等，coding.net 代码源） |
-| devops API | 冒烟全通：CreatePipeline → StartPipelineRun（API 触发）→ GetPipelineRun → DeletePipeline，运行 SUCCESS |
-| 服务连接 | 仅有 Codeup 连接 `578243`（2024-01 建，对 `ddmp/et-bst-api` 无访问权限）；**无 ACR、无 ACK 服务连接** |
+| 云效组织 | `svision100的代码库`，org `659a5cefd64a2eb2dceb72f3`；`power-application-user` 已手动同步为普通成员，`ListJoinedOrganizations` 和 `ListPipelines` API 成功；当前无流水线 |
+| devops API | 先前在旧组织完成 CreatePipeline → StartPipelineRun → GetPipelineRun → DeletePipeline 冒烟；当前 svision100 组织的成员及只读 API 已验证，创建/运行尚待服务连接就绪 |
+| 服务连接 | 组织内有 svision100 所有的 Codeup 连接 `xdghn746erjk8hdo`（授权 `413656`）及 ACR 连接 `o1gxp5wzksoe1mtu`（API ID `581029`）；两者使用范围均为“私密：仅自己可见”，不能据此认定 `power-application-user` 可用于流水线。`ListServiceConnections` 以该 RAM 用户查询时仅返回 ACR，Codeup/ACK 为空；目标 ACR 企业版实例适配性尚未验证 |
 | etbst 仓库 | `/Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api`，origin `codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api.git`，`release` 分支在用，根目录 Dockerfile（多阶段 Maven 构建，适配容器部署） |
-| ACR 直连 API | 当前 RAM 用户 `power-application-user` 调 ACR EE API 返回 `AUTHENTICATION_FAILED`（Unauthorized） |
-| ACS/CS API | 同一身份 `GET /clusters` 返回空、kubeconfig 接口报 `ErrorClusterNotFound`——**该 RAM 用户当前看不到集群**（交接期曾可用，权限有变动） |
+| Codeup API | `power-application-user` 调 `GetRepository --identity ddmp/et-bst-api` 返回 `SYSTEM_NOT_FOUND_ERROR`，`ListRepositories --search et-bst-api` 返回空；该 RAM 成员目前无法通过 API 读取目标仓库 |
+| ACR 直连 API | 同一 Profile 于 2026-09-27 复核 `GetInstance` 成功；此前 Unauthorized 不代表当前持续无权 |
+| ACS/CS API | 同一 Profile 于 2026-09-27 复核 `DescribeClusterUserKubeconfig` 成功（未读取或保存内容）；此前 `ErrorClusterNotFound` 不代表当前持续无权 |
 
-权限缺口不影响本地命令（只用 devops API），但影响流水线构建/部署阶段和服务连接创建，见下方清单。
+云效组织成员问题已解决。下一步需确认可用的 Codeup、ACR 和 ACK 授权及流水线对服务连接的可见范围。
+
+2026-09-27 再通过 API 确认：`power-application-user`（`accountId=203420990220401362`）在 `svision100` 组织中状态为 `normal`、角色为“成员”。这只证明组织成员资格，不代表已获 `ddmp/et-bst-api` 仓库权限。当前身份无法读取该仓库，仓库授权须由有管理权限的身份按单仓库最小范围执行并回读确认。
+
+流水线模板中的企业版镜像步骤 `ACREEDockerBuild` 和 Kubernetes 镜像步骤 `KubectlSetImage` 已按[云效官方步骤清单](https://help.aliyun.com/zh/yunxiao/user-guide/step-steps-list)核对。镜像步骤的标准制品包含 tag 地址，尚无已验证的 digest 传递方式；上线前必须取得 ACR digest 并传给部署步骤，不能用 tag 地址替代。
+
+ACR 直连 API 已能读取目标仓库 `ruishi-java-prod/etbst-api`，仓库 ID 为 `crr-gkqkb2np05u435bf`。`cr list-repo-tag` 的返回含 `Digest` 字段；构建完成后可按本次唯一 tag 调用 `cr get-repo-tag --instance-id cri-73ffxebpi6ruw6sn --repo-id crr-gkqkb2np05u435bf --tag <本次tag> --region cn-beijing --profile ruishi-prod-acr` 查 digest。该查询能力已由现存 tag 的只读 API 返回证实，尚需验证新构建 tag 到部署任务的实际传值链路。
 
 ## 控制台一次性授权清单（待办）
 
-以下操作需要云效/阿里云控制台权限（OAuth、RAM 授权），CLI 无法代做。完成后把各 ID 回填到 `deployment/flow/pipeline-etbst-api.yaml` 并执行 `apply`：
+优先通过阿里云 devops API 核验、创建可用连接；Codeup 的 OAuth 授权若 API 无法完成，需由授权账号处理。完成后把各 ID 回填到 `deployment/flow/pipeline-etbst-api.yaml` 并执行 `apply`：
 
-1. **Codeup 服务连接**（流水线设置 → 服务连接管理 → 新建 Codeup）：授权账号须能访问 `ddmp/et-bst-api`（Codeup 组织 `659a5cefd64a2eb2dceb72f3`）。旧连接 `578243` 无权限，建议新建并记录 ID `<CODEUP_SC>`。
-2. **容器镜像服务（企业版）服务连接**：选北京实例 `cri-73ffxebpi6ruw6sn`，记录 ID `<ACR_SC>`。
+1. **Codeup 服务连接**：先让 `power-application-user` 获得 `ddmp/et-bst-api` 的最小必要仓库权限，或由已有权限的账号提供限定范围的连接。现有私密连接 `xdghn746erjk8hdo` 的目标仓库访问尚未验证。取得当前流水线可用的连接 ID `<CODEUP_SC>`。
+2. **容器镜像服务（企业版）服务连接**：核验现有连接 `o1gxp5wzksoe1mtu` 对北京实例 `cri-73ffxebpi6ruw6sn` 的适配性与流水线可用性，不合适再创建；记录 ID `<ACR_SC>`。
 3. **容器服务 Kubernetes（ACK）服务连接**：选集群 `ruishi-prod-acs`（`cebc88343a44b4d759aa983a47b787835`），记录 ID `<ACK_SC>`。
-4. （备选）若部署阶段不走 ACK 服务连接而用 shell+阿里云 CLI：需为 CI 准备一个有 ACR/CS 权限的 RAM 用户并确认集群公网 API 可达；当前 `power-application-user` 两项都缺。优先用 1-3 的服务连接方案。
+4. （备选）若部署阶段不走 ACK 服务连接而用 shell+阿里云 CLI：需为 CI 准备经批准的 ACR/CS 权限并确认集群 API 可达。优先用 1-3 的服务连接方案。
 
 流水线 YAML 校验报错时按报错信息调整 step 标识符（以云效「YAML 步骤清单」为准），apply 可反复执行直至通过。
 
