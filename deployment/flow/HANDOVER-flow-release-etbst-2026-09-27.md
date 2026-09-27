@@ -22,15 +22,16 @@
 - deploySys 本机注册：ETBST 项目下 `api-flow-push / api-flow-build / api-flow-deploy` 三个命令块（`config/projects.local.yaml`，私有不入库），流水线 ID 待填。
 - 文档：`deployment/flow-release-commands.md`、README 新章节、`config/projects.yaml` 模板注释。
 - `power-application-user` 已手动同步为 `svision100的代码库`（`659a5cefd64a2eb2dceb72f3`）的普通成员；`ListJoinedOrganizations`、`ListPipelines`、`ListServiceConnections` API 已可调用。发布脚本默认组织已纠正为该组织。
+- 已用 svision100 主账号通过阿里云 API 将 `power-application-user` 加为 `ddmp/et-bst-api`（仓库 ID `6424213`）的单仓库浏览者（20）；管理员成员列表和该 RAM 用户的仓库列表均已回读确认。
 - 仓库单测 27/28 过，1 个失败是本机 git 2.15 过旧（不支持 `git init -b`）的既有环境问题，与本次无关。
 
-**未完成（被授权卡住）：** 流水线正式创建、首次真实构建与上线验收。
+**未完成（服务连接和 digest 传递待落实）：** 流水线正式创建、首次真实构建与上线验收。
 
 ## 三、待办事项
 
-**A. 管理员控制台操作（一次性授权，CLI 无法代做）：**
+**A. 服务连接待办（优先经 API，必要时由授权账号在控制台处理）：**
 
-1. 核验并取得可用于 `ddmp/et-bst-api` 的 **Codeup 服务连接**。svision100 所有的现有连接 `xdghn746erjk8hdo`（授权 `413656`）为“私密：仅自己可见”；`power-application-user` 查询 Codeup 连接列表为空，`GetRepository` 返回 `SYSTEM_NOT_FOUND_ERROR`，`ListRepositories` 搜索为空。需给该 RAM 成员最小必要仓库权限，或用已获授权的账号提供限定范围的连接。优先用阿里云 API；OAuth 授权若 API 无法完成，需授权账号操作。
+1. 核验并取得可用于 `ddmp/et-bst-api` 的 **Codeup 服务连接**。单仓库浏览者权限已授予 `power-application-user`。此前控制台显示私密连接 `xdghn746erjk8hdo`（授权 `413656`），但 svision100 主账号与该 RAM 用户通过 API 查询 Codeup 连接列表均为空；不能据此认定连接可用。OAuth 授权若 API 无法完成，需授权账号操作。
 2. 核验现有 **ACR 服务连接** `o1gxp5wzksoe1mtu`（API ID `581029`）能否用于企业版实例 `cri-73ffxebpi6ruw6sn` 及目标流水线；不适用时创建专用连接。
 3. 创建 **Kubernetes（ACK/ACS）服务连接**：集群 `ruishi-prod-acs`（`cebc88343a44b4d759aa983a47b787835`）；`power-application-user` 查询 ACK 连接列表为空。
 4. 对服务授权和服务连接使用范围做最小权限核验，再以 API 回读确认。
@@ -44,7 +45,7 @@
 
 ## 四、遇到的问题和难点
 
-1. **Codeup 授权归属**：旧组织连接 `578243` 对 `ddmp/et-bst-api` 报"代码仓库不存在或者无权限"；正确组织 `659a5cefd64a2eb2dceb72f3` 有另一条私密连接 `xdghn746erjk8hdo`，尚未验证能否访问该仓库。`CreateServiceAuth` API 仅支持 RAM，Codeup OAuth 授权不能由该 API 新建。
+1. **Codeup 服务连接归属**：旧组织连接 `578243` 对 `ddmp/et-bst-api` 报"代码仓库不存在或者无权限"；正确组织 `659a5cefd64a2eb2dceb72f3` 的仓库成员权限已修复，但此前控制台所见私密连接 `xdghn746erjk8hdo` 未出现在主账号 API 列表中。`CreateServiceAuth` API 仅支持 RAM，Codeup OAuth 授权不能由该 API 新建。
 2. **权限现状需区分产品核验**：此前 ACR/CS 调用曾失败；2026-09-27 同一 Profile 调用 ACR `GetInstance` 成功，CS `DescribeClusterUserKubeconfig`（15 分钟临时配置）也成功，未显示或保存 kubeconfig。云效组织成员资格已修复，剩余问题是服务授权及连接的目标实例、可见范围。
 3. **固定 digest 尚未打通**：云效官方步骤清单明确企业版镜像构建为 `ACREEDockerBuild`、Kubernetes 镜像更新为 `KubectlSetImage`，但构建步骤的标准镜像制品给出的是 tag 地址。需在部署前取得并校验 ACR digest，并确认能传给 `KubectlSetImage.artifact`；不能把 tag 地址当作固定 digest。
 4. **手动触发与代码源默认 webhook 的张力**：要求"push 不自动构建"，模板用 `triggerEvents: []`，创建后需回读配置确认没有残留 push 触发。
