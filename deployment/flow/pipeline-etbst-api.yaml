@@ -4,7 +4,7 @@
 # 创建/更新：FLOW_PIPELINE_ID=<已有ID> bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml
 #
 # 带 <> 的占位符在云效控制台创建对应服务连接后替换（见 deployment/flow-release-commands.md 清单）：
-#   <CODEUP_SC>  Codeup 服务连接 ID（需能访问 ddmp/et-bst-api 仓库）
+#   Codeup 服务连接 xdghn746erjk8hdo 已对 power-application-user 可见，实际拉取待验证
 #   ACR 服务连接 lhjkwns3zhj879ic 已对 power-application-user 可见，推送能力待验证
 #   <ACK_SC>     容器服务 Kubernetes 集群（cebc88343a44b4d759aa983a47b787835）服务连接 ID
 #
@@ -19,7 +19,7 @@ sources:
     triggerEvents: []            # 手动触发（本地 flow-release.sh build），不做 push 自动构建
     certificate:
       type: serviceConnection
-      serviceConnection: <CODEUP_SC>
+      serviceConnection: xdghn746erjk8hdo
 
 stages:
   build_stage:

@@ -23,13 +23,15 @@
 |---|---|
 | 云效组织 | `svision100的代码库`，org `659a5cefd64a2eb2dceb72f3`；`power-application-user` 已手动同步为普通成员，`ListJoinedOrganizations` 和 `ListPipelines` API 成功；当前无流水线 |
 | devops API | 先前在旧组织完成 CreatePipeline → StartPipelineRun → GetPipelineRun → DeletePipeline 冒烟；当前 svision100 组织的成员及只读 API 已验证，创建/运行尚待服务连接就绪 |
-| 服务连接 | 新 ACR 连接 `lhjkwns3zhj879ic`（API ID `943301`）已设为指定成员可见，`power-application-user` 经 API 回读可见；旧 ACR 连接为 `o1gxp5wzksoe1mtu`（API ID `581029`）。Codeup/ACK 列表仍为空；新 ACR 连接对目标企业版实例的推送能力尚未实测 |
+| 服务连接 | 新 ACR 连接 `lhjkwns3zhj879ic`（API ID `943301`）及 Codeup 连接 `xdghn746erjk8hdo`（API ID `580982`）均已设为指定成员可见，`power-application-user` 经 API 回读可见；ACK 列表仍为空。代码拉取和 ACR 企业版推送能力尚未实测 |
 | etbst 仓库 | `/Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api`，origin `codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api.git`，`release` 分支在用，根目录 Dockerfile（多阶段 Maven 构建，适配容器部署） |
 | Codeup API | svision100 主账号确认目标仓库 ID `6424213`，并经 `AddRepositoryMember` 将 `power-application-user` 加为单仓库浏览者（20）；管理员成员列表与该 RAM 用户的 `ListRepositories` 均回读成功 |
 | ACR 直连 API | 同一 Profile 于 2026-09-27 复核 `GetInstance` 成功；此前 Unauthorized 不代表当前持续无权 |
 | ACS/CS API | 同一 Profile 于 2026-09-27 复核 `DescribeClusterUserKubeconfig` 成功（未读取或保存内容）；此前 `ErrorClusterNotFound` 不代表当前持续无权 |
 
-云效组织成员与目标代码仓库浏览权限已解决。下一步需确认可用的 Codeup、ACR 和 ACK 服务连接及其对流水线的可见范围。
+云效组织成员、目标代码仓库浏览权限及 Codeup/ACR 服务连接可见性已解决。下一步需创建 ACK 服务连接，并在流水线中验证代码拉取和镜像推送。
+
+注意：`ListServiceConnections` 查询 Codeup 时必须传 `--sericeConnectionType codeup`（小写）；CLI 帮助列出的 `Codeup`（大写）会返回空列表。此前由此造成的“连接未生效”判断已纠正。
 
 2026-09-27 通过 svision100 主账号的 CLI OAuth 配置 `svision100code` 执行单仓库授权：`power-application-user`（`accountId=203420990220401362`）在组织中状态为 `normal`、角色为“成员”，在 `ddmp/et-bst-api` 仓库中为活跃浏览者（20）。未授予其他仓库权限。
 
@@ -41,7 +43,7 @@ ACR 直连 API 已能读取目标仓库 `ruishi-java-prod/etbst-api`，仓库 ID
 
 优先通过阿里云 devops API 核验、创建可用连接；Codeup 的 OAuth 授权若 API 无法完成，需由授权账号处理。完成后把各 ID 回填到 `deployment/flow/pipeline-etbst-api.yaml` 并执行 `apply`：
 
-1. **Codeup 服务连接**：单仓库浏览者权限已就绪。此前控制台可见的私密连接 `xdghn746erjk8hdo` 未出现在主账号 API 列表中；需取得当前流水线可用的连接 ID `<CODEUP_SC>`，并核验其对目标仓库的访问。
+1. **Codeup 服务连接**：连接 `xdghn746erjk8hdo`（API ID `580982`）已对 `power-application-user` 可见，并已回填模板；仍需通过流水线核验它能否拉取目标仓库。
 2. **容器镜像服务（企业版）服务连接**：新连接 `lhjkwns3zhj879ic`（API ID `943301`）已对 `power-application-user` 可见，可作为 `<ACR_SC>` 候选；仍需通过流水线核验其对北京实例 `cri-73ffxebpi6ruw6sn` 的实际推送能力。
 3. **容器服务 Kubernetes（ACK）服务连接**：选集群 `ruishi-prod-acs`（`cebc88343a44b4d759aa983a47b787835`），记录 ID `<ACK_SC>`。
 4. （备选）若部署阶段不走 ACK 服务连接而用 shell+阿里云 CLI：需为 CI 准备经批准的 ACR/CS 权限并确认集群 API 可达。优先用 1-3 的服务连接方案。
