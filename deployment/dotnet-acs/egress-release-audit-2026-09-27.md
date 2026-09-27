@@ -1,5 +1,7 @@
 # ACS 公网出口与发布选址核查（2026-09-27）
 
+**历史只读快照：本页中的“准入未安装”和默认选址状态仅代表执行前。当前状态以[同日执行记录](egress-release-execution-2026-09-27.md)和实时 API 读回为准。**
+
 核查对象：生产账号 `1442361567788059`、北京 `ruishi-prod-acs`、VPC `vpc-2zervez1jgscsglpenrzo`。使用显式 `ruishi-prod-acr` Profile，通过阿里云 OpenAPI 和临时 ACS Kubernetes API 凭据**只读**核查；临时凭据未写入仓库。本文中的“可出网”指网络路由与 SNAT 条件具备，不等于微信、支付等真实业务验收通过。
 
 ## 结论

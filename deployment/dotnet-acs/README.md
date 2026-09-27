@@ -2,6 +2,8 @@
 
 状态：**公共 NAT 已建，五个 .NET 项目已有 ACS 运行对象；售后 Worker 已于 2026-09-27 00:21 启动。** 本页为架构及文档入口，不代表实时副本。先看[2026-09-27 验收整改记录](acceptance-remediation-2026-09-27.md)和[2026-09-27 部署复盘](production-review-2026-09-27.md)的证据边界，再按[阿里云 API 使用说明](aliyun-api-operations.md)读回。业务代码适配在各项目独立会话完成。任何“待验证”项都不能在切换时凭经验补齐。
 
+统一公网出口的最新执行状态、按 Namespace 的默认选址与准入范围，见[2026-09-27 执行记录](egress-release-execution-2026-09-27.md)；发布前使用[只读检查脚本](egress-release-check.py)核对[统一网络清单](egress-network-inventory.yaml)。早期核查文件保留为历史快照。
+
 ## 范围
 
 本轮范围是新零售、积分商城、售后工单、AI 自习室和经销商查询，设计共 8 个 API Deployment、4 个 Worker；经销商的前后台接口由同一个 `agent-query-api` 承载。积分商城 FrontApi、以旧换新和 SmsCore 规划保留 ECS。**2026-09-27 主公确认 AI FrontApi 已下线，不再列为待恢复或迁移对象**；其旧 ECS 在当天 08:32 读回为 Stopped。最近一次 ACS 读回为 **7 个 API、4 个 Worker**，积分 Front 未创建；售后 Worker 已在后续变更中启动。Worker 的唯一执行还须靠旧服务退出确认和业务幂等，不能只靠单副本。每项发布后至少观察 24 小时并覆盖关键任务周期，尚未取得完整观察证据。
