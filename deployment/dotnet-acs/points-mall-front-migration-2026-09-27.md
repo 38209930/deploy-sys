@@ -23,6 +23,7 @@
 | 8 | 新 ALB 定向验收 | 保持原 Host/SNI 并定向连接新 ALB，`/health/live`、`/health/ready` 均为 HTTP 200，TLS 校验结果 0。就绪检查含数据库与 Redis 依赖。 |
 | 9 | 域名持有人切换 CNAME | 用户确认已切换；`223.5.5.5` 与 `1.1.1.1` 查询均返回 `alb-olyb9enxszy3f42nnn.cn-beijing.alb.aliyuncsslb.com`，TTL 600 秒。本机递归缓存当时仍指向旧 ALB，普通请求暂为 502，待缓存过期复验。 |
 | 10 | FrontApi 只读业务接口核对 | 保持正式 Host/SNI 定向新 ALB，`GET /public/info` 返回 HTTP 200，TLS 校验通过；未触发订单、短信或支付动作。 |
+| 11 | 以公共 DNS 的实际 A 记录验证入口 | `223.5.5.5` 返回新 ALB 的 `47.93.187.192`、`39.107.190.79`；分别以正式 Host/SNI 连接，两地址的 `/health/live` 与 `/public/info` 均为 HTTP 200 且 TLS 校验通过。本机路由器 DNS 同时仍缓存旧 A 记录，普通本机请求仍可能超时。 |
 
 ## 后续完成条件
 
