@@ -1,0 +1,70 @@
+# pipeline-name: etbst-api-发布
+#
+# 云效 Flow 流水线定义（etbst-api 试点）。
+# 创建/更新：FLOW_PIPELINE_ID=<已有ID> bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml
+#
+# 带 <> 的占位符在云效控制台创建对应服务连接后替换（见 deployment/flow-release-commands.md 清单）：
+#   <CODEUP_SC>  Codeup 服务连接 ID（需能访问 ddmp/et-bst-api 仓库）
+#   <ACR_SC>     容器镜像服务（企业版实例 cri-73ffxebpi6ruw6sn）服务连接 ID
+#   <ACK_SC>     容器服务 Kubernetes 集群（cebc88343a44b4d759aa983a47b787835）服务连接 ID
+#
+# 注意：构建/部署步骤的 step 标识符以云效「YAML 步骤清单」为准；apply 校验报错时按错误信息调整。
+
+sources:
+  etbst_repo:
+    type: codeup
+    name: et-bst-api
+    endpoint: https://codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api.git
+    branch: release
+    triggerEvents: []            # 手动触发（本地 flow-release.sh build），不做 push 自动构建
+    certificate:
+      type: serviceConnection
+      serviceConnection: <CODEUP_SC>
+
+stages:
+  build_stage:
+    name: 构建并推送镜像
+    jobs:
+      build_job:
+        name: etbst-api-镜像
+        runsOn:
+          group: public/cn-beijing
+        steps:
+          acr_push:
+            name: 构建镜像并推送ACR企业版
+            step: <ACR构建推送步骤>      # 仓库根 Dockerfile 多阶段构建，linux/amd64
+            with:
+              dockerRegistry: ruishi-prod-registry.cn-beijing.cr.aliyuncs.com
+              dockerRepository: ruishi-java-prod/etbst-api
+              dockerTag: "${DATETIME}-${CI_COMMIT_ID}"   # Tag 不可变，禁止复用
+              serviceConnection: <ACR_SC>
+          record_digest:
+            name: 记录镜像摘要
+            step: Command
+            with:
+              run: |
+                echo "commit=${CI_COMMIT_ID}" >> flow-release.txt
+                echo "image=ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api" >> flow-release.txt
+
+  confirm_stage:
+    name: 人工确认
+    jobs:
+      confirm_job:
+        name: 上线前确认           # 本地 flow-release.sh deploy 通过该卡点
+        <人工确认任务，apply 时按云效当前语法配置>
+
+  deploy_stage:
+    name: 部署ACS
+    jobs:
+      deploy_job:
+        name: 更新ACS镜像
+        runsOn:
+          group: public/cn-beijing
+        steps:
+          k8s_set_image:
+            name: 固定digest更新Deployment
+            step: <Kubernetes部署步骤>
+            with:
+              serviceConnection: <ACK_SC>
+              # 命名空间/Deployment/Service/Ingress 均为 etbst-api，只更新镜像字段
+              # 镜像引用固定 digest：ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api@sha256:...

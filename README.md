@@ -194,3 +194,11 @@ deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new ->
 `scripts/deploy-vet-api-systemd.sh` 发布 VET 的 `vet-api.service` 并检查 8040 端口。VET 包含高频定时任务，发布前必须确认旧实例已经退出。
 
 `scripts/deploy-dgye-api-systemd.sh` 发布 DGYE 的 `dgye-api.service` 并检查 8030 端口。DGYE 尚未拆分定时任务，切换时禁止新旧实例重叠运行。
+
+## 云效 Flow 发布命令（ACS/ACR 生产）
+
+生产 api/worker 服务已迁入北京 ACS（镜像在 ACR `ruishi-java-prod` / `ruishi-dotnet-prod`），上述 `scripts/deploy-*-systemd.sh` 的 SSH+systemd 流程仅保留用于开发测试。生产发布改为本地触发云效 Flow 流水线：Codeup `release` 分支 → 构建镜像 push ACR → 人工确认卡点 → 固定 digest 更新 ACS Deployment。**流水线手动触发，push 不自动构建。**
+
+命令入口 `scripts/flow-release.sh`（子命令 `push | build | deploy | status | apply`），通过阿里云 CLI 调用云效 OpenAPI，显式 `--profile ruishi-prod-acr --region cn-beijing` 并核验账号；deploySys 菜单中对应条目如 `ETBST API Flow 构建`。试点 etbst-api，跑通后按模板复制到其余项目。认证失效执行 `aliyun configure --profile ruishi-prod-acr`。
+
+详细说明、现网核实结论与待办的控制台授权清单见 [deployment/flow-release-commands.md](deployment/flow-release-commands.md)；流水线 YAML 模板见 [deployment/flow/pipeline-etbst-api.yaml](deployment/flow/pipeline-etbst-api.yaml)。
