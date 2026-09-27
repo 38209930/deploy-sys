@@ -64,3 +64,10 @@
 | ACR 企业版实例 | `cri-73ffxebpi6ruw6sn`，Java 命名空间 `ruishi-java-prod` |
 | etbst 源码 | `/Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api`，origin `codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api.git` |
 | 本地状态目录 | `data/flow-state/`（gitignored） |
+
+## 六、2026-09-27 后续进展
+
+- 已通过 `svision100code` 主账号的 devops API 创建 ACK 服务连接 `fmayt57b9ttcjq61`（API ID `943303`），`power-application-user` 可查询。`CreateServiceConnection` 使用 `scope=CUSTOM` 成功，文档中的 `PERSON` 实测返回 `Invalidscope`。
+- 流水线 YAML 已加入 `ManualValidate`（验证人 `power-application-user`）和构建后 RepoDigest 提取、全局变量传递；后者尚未通过真实构建验证。
+- 首次 `apply` 被云效 YAML 校验拒绝：`kubernetesCluster` 不能填 ACK 服务连接 ID。还须在云效「全局设置 > Kubernetes 集群管理」用该服务连接注册 `ruishi-prod-acs`，授予 `power-application-user` 使用者，回填 Flow 集群 ID `<FLOW_K8S_CLUSTER_ID>`。当前流水线未创建，未触发构建或生产部署。详见 [../flow-release-commands.md](../flow-release-commands.md)。
+- 容器名暂按仓库命名写为 `etbst-api`；首次上线前必须只读回查现网 Deployment 的真实容器名。
