@@ -138,3 +138,19 @@ Pod 位置 11:0x 读回（副本/重启全部正常）：STOPMP `172.31.239.13`�
 | 新北京 i：`172.28.64.0/24` | 11:26 新增全局规则，写后启用 | 当前这些目标业务 Pod 未落此网段；保留跨可用区覆盖 |
 
 DGYE、VET 当前没有运行中的业务 Pod；其已记录的旧网段属于既有白名单覆盖。此次没有新增旧 `/20` 规则，也没有扩大至整个 VPC。**IP 覆盖只是 SmsCore 的来源门槛**：各项目是否实际启用 `ruishi` 通道、应用身份/HMAC 及真实短信受理仍需逐项目证据；不能仅凭此表宣称全部短信业务验收通过。11:26 后截至本次核查，售后 Worker 日志未见新的短信发送事件或 `auth.ip_not_allowed`，因此还没有新网段的真实发送成功证据。新零售的短信来源同样已覆盖，但它仍在无 SNAT 的旧 Pod 网段；历史公网调用超时须由单独的出口迁移处理，不能通过 SmsCore 白名单修复。
+
+### 新零售出口迁移：实时准备快照（2026-09-27 11:40 CST）
+
+主公指出新零售仍在旧网段后，使用显式生产 Profile 和短期 ACS 凭据只读复核；STS 账号 `1442361567788059`（RequestId `01A0E112-2B8A-5A02-80DA-00AEEFAA5B05`）。三个 Deployment 期望/Ready 均为 1，`Recreate`，Pod 重启数均为 0；Pod 模板均没有 `network.alibabacloud.com/vswitch-ids`，因此沿用 ACS 旧网段兜底选址：
+
+| Deployment | 当前 Pod IP | Deployment UID | 变更前 resourceVersion |
+|---|---|---|---|
+| `new-retail-front` | `172.28.53.146` | `013ea972-c04a-47e9-9297-5a9334d406c1` | `1199724` |
+| `new-retail-back` | `172.31.239.26` | `6ba0bd81-8f93-4780-9f5f-19d7df2a2b1c` | `1189501` |
+| `new-retail-worker` | `172.31.239.29` | `74e472c4-88ef-4c42-a811-1a75377a22cf` | `1199576` |
+
+两个 API 正式域名的 `/health/ready` 当前均返回 200 且 TLS 校验通过。新 k/i vSwitch 均 `Available`、剩余地址分别 242/252（RequestId `01A0E114-DD74-5E9A-9650-02F717E8E46A`、`01A0E114-DEAD-510E-9818-0887AF5F51C8`）；NAT `Available`（RequestId `01A0E114-DFEC-59FC-AE47-A92739E4A641`）；两条 vSwitch SNAT 均 `Available` 且出口同为 `39.96.67.239`（RequestId `01A0E114-FEC0-580E-89C9-EDAA51A816C4`）。官方 ACS 文档确认 Deployment 的指定交换机注解应写在 `spec.template.metadata.annotations`，多个交换机按顺序尝试。[阿里云文档](https://help.aliyun.com/zh/cs/user-guide/specify-vswitch-and-securitygroups-for-the-pod)
+
+**精确变更**：按 Front、Back、Worker 顺序，一次仅为一个对象的 Pod 模板添加 `network.alibabacloud.com/vswitch-ids=vsw-2zevd832gq3313j6gv5sj,vsw-2zesy6off4gy39tqripzp`；每步保留原镜像 digest、Secret、Service、Ingress、副本与 `Recreate` 策略。先记录当前 resourceVersion，再用带并发前置条件的 Kubernetes API 更新；读回新 Pod IP 和旧 Pod 退出，核对私网依赖、NAT EIP、正式 Host、业务错误和 Worker 唯一性。任一步异常，只恢复**该 Deployment**的原注解缺失状态，先查外部写请求结果；不碰共享 NAT/SNAT/路由。单副本 `Recreate` 会带来短暂不可用，不能承诺零中断。
+
+**仍需闭合的门槛**：新零售生产生效短信通道与旧供应商禁用状态；实际启用的微信/汇付等外呼及第三方源 IP 白名单；Worker 旧实例自动拉起状态、资金/退款/短信任务的重启与幂等；生产告警接收人验证及无业务副作用触达。现网容器无 `curl`/`wget`，不能以容器内现成工具证明项目外呼；最近有界日志也无可定位的自然支付/短信事件。当前未修改任何新零售资源、未发送支付或短信请求。原任务书要求上述门槛通过再迁移，不能把本次网络准备快照写成上线验收。
