@@ -202,3 +202,13 @@ deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new ->
 命令入口 `scripts/flow-release.sh`（子命令 `push | build | deploy | status | apply`），通过阿里云 CLI 调用云效 OpenAPI，显式 `--profile ruishi-prod-acr --region cn-beijing` 并核验账号；deploySys 菜单中对应条目如 `ETBST API Flow 构建`。试点 etbst-api，跑通后按模板复制到其余项目。认证失效执行 `aliyun configure --profile ruishi-prod-acr`。
 
 详细说明、现网核实结论与待办的控制台授权清单见 [deployment/flow-release-commands.md](deployment/flow-release-commands.md)；流水线 YAML 模板见 [deployment/flow/pipeline-etbst-api.yaml](deployment/flow/pipeline-etbst-api.yaml)。
+
+## ACS 当前资源占用查询
+
+每个 ACS 服务菜单提供“ACS 资源占用”，显示容器 CPU/内存近期用量、requests/limits、Pod IP、Ready、重启及上次退出原因。命令也可独立执行：
+
+```bash
+python3 scripts/acs-resource-usage.py --namespace points-mall --deployment points-mall-front
+```
+
+使用指定生产 Profile，经阿里云 API 获取临时 ACS 访问配置，自动清理；需要 OpenVPN 可达集群私有 API 及 metrics-server。查询只读，不启动业务、不修改资源。零副本显示无 Pod；指标不可用会提示并返回非零，不能解释为零用量。该命令不提供历史峰值或 CPU 限流统计。`python3 scripts/sync-flow-menus.py` 可同步各服务的本机菜单。

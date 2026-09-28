@@ -108,17 +108,24 @@ def main():
             logs = ("python3 scripts/etbst-logs.py " +
                     " ".join(f"--{key.replace('_', '-')} {shlex.quote(row[key])}"
                              for key in ("namespace", "deployment", "container")))
+            resources = ("python3 scripts/acs-resource-usage.py " +
+                         f"--namespace {shlex.quote(row['namespace'])} " +
+                         f"--deployment {shlex.quote(row['deployment'])}")
             prefix = f"flow-{sid}"
             flow_entries.extend((
                 entry(f"{prefix}-push", f"{row['name']} Flow 推送 {branch}", row["kind"], push, status),
                 entry(f"{prefix}-build", f"{row['name']} Flow 构建", row["kind"], build, status),
                 entry(f"{prefix}-deploy", f"{row['name']} Flow 上线", row["kind"], deploy,
                       env(FLOW_PIPELINE_ID=confirm_id, FLOW_SERVICE=sid) + " bash scripts/flow-release.sh status"),
+                entry(f"{prefix}-resources", f"{row['name']} ACS 资源占用", row["kind"], resources),
                 entry(f"{prefix}-logs", f"{row['name']} ACS 查看日志", row["kind"], logs),
             ))
         project["services"] = flow_entries + retained
 
     etbst = lookup["etbst"]
+    etbst["services"] = [item for item in etbst["services"] if item["id"] != "api-acs-resources"]
+    etbst["services"].append(entry("api-acs-resources", "ETBST API ACS 资源占用", "java",
+        "python3 scripts/acs-resource-usage.py --namespace etbst-api --deployment etbst-api"))
     for item in etbst["services"]:
         command = item["targets"]["prod"]["commands"]["run"]
         if item["id"] == "api-flow-deploy":
