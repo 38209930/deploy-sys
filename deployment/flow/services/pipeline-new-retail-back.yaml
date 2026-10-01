@@ -4,8 +4,8 @@ sources:
   source_repo:
     type: codeup
     name: new-retail-back
-    endpoint: https://codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/jifen-mall/jifen-api.git
-    branch: product/new-retail
+    endpoint: https://codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/new-store/new-store-api.git
+    branch: release
     triggerEvents: []
     certificate:
       type: serviceConnection

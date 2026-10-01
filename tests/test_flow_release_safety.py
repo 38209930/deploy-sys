@@ -2,8 +2,10 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
+import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,6 +21,38 @@ def load(name, filename):
 evidence = load("flow_evidence", "flow-build-evidence.py")
 deploy = load("acs_deploy", "acs-image-deploy.py")
 menus = load("flow_menus", "sync-flow-menus.py")
+generator = load("flow_generator", "generate-flow-pipelines.py")
+
+
+class NewRetailConfigTests(unittest.TestCase):
+    def test_independent_release_source_and_unchanged_targets(self):
+        services = yaml.safe_load((ROOT / "deployment/flow/services.yaml").read_text())["services"]
+        rows = [s for s in services if s["group"] == "new-retail"]
+        self.assertEqual(len(rows), 3)
+        for row in rows:
+            self.assertEqual(row["repo"], "new-store/new-store-api.git")
+            self.assertEqual(row["branch"], "release")
+            self.assertEqual(row["namespace"], "new-retail")
+            self.assertEqual(row["deployment"], row["id"])
+            self.assertEqual(row["container"], row["id"].removeprefix("new-retail-"))
+            self.assertEqual(row["replicas"], 1)
+            self.assertEqual(row["repo_dir"], "/Volumes/SSD/work/mall/新零售/newsale-api")
+
+    def test_regenerated_new_retail_templates_match_checked_in_files(self):
+        # 全部输出仅写临时目录，不运行真实同步脚本或改其他项目模板。
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            with patch.object(generator, "OUTPUT", output):
+                generator.main()
+            for service in ("front", "back", "worker"):
+                for suffix in ("", "-confirm"):
+                    name = f"pipeline-new-retail-{service}{suffix}.yaml"
+                    self.assertEqual((output / name).read_text(),
+                                     (ROOT / "deployment/flow/services" / name).read_text())
+                build = yaml.safe_load((output / f"pipeline-new-retail-{service}.yaml").read_text())
+                self.assertEqual(build["sources"]["source_repo"]["triggerEvents"], [])
+                confirm = yaml.safe_load((output / f"pipeline-new-retail-{service}-confirm.yaml").read_text())
+                self.assertEqual(confirm["stages"]["confirm_stage"]["jobs"]["confirm_job"]["component"], "ManualValidate")
 
 
 class FlowMenuTests(unittest.TestCase):
@@ -49,6 +83,12 @@ class BuildEvidenceTests(unittest.TestCase):
 
     def test_duplicate_tag_is_rejected(self):
         self.tags["Images"].append(dict(self.tags["Images"][0]))
+        with self.assertRaises(ValueError):
+            evidence.verify(self.run, self.tags, "product/new-retail")
+
+    def test_release_evidence_rejects_old_product_branch(self):
+        self.run["pipelineRun"]["sources"][0]["data"]["branch"] = "release"
+        self.assertEqual(evidence.verify(self.run, self.tags, "release")[0], self.commit)
         with self.assertRaises(ValueError):
             evidence.verify(self.run, self.tags, "product/new-retail")
 
