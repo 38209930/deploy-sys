@@ -255,13 +255,13 @@ cmd_deploy() {
     exit 1
   }
   [ "$FLOW_DEPLOY_MODE" = "local" ] || fail "上线必须使用本机兼容 kubectl 更新镜像"
-  local run_id local_image_ref="" local_image_tag="" local_state_status=""
+  local run_id local_image_ref="" local_image_tag="" local_state_status="" local_source_commit=""
   if [ "$FLOW_DEPLOY_MODE" = "local" ]; then
     [ -n "$FLOW_IMAGE_REPO" ] && [ -n "$FLOW_ACR_INSTANCE_ID" ] && [ -n "$FLOW_ACR_REPO_ID" ] \
       && [ -n "${FLOW_NAMESPACE:-}" ] && [ -n "${FLOW_DEPLOYMENT:-}" ] && [ -n "${FLOW_CONTAINER:-}" ] \
       || fail "本机上线需要 ACR、镜像仓库及 ACS 目标参数"
     [ -f "$FLOW_STATE_DIR/$FLOW_SERVICE.env" ] || fail "没有本地待确认镜像记录"
-    read -r local_state_status local_image_ref local_image_tag < <(python3 - "$FLOW_STATE_DIR/$FLOW_SERVICE.env" "$FLOW_PIPELINE_ID" "$FLOW_IMAGE_REPO" <<'PY'
+    read -r local_state_status local_image_ref local_image_tag local_source_commit < <(python3 - "$FLOW_STATE_DIR/$FLOW_SERVICE.env" "$FLOW_PIPELINE_ID" "$FLOW_IMAGE_REPO" <<'PY'
 import re, sys
 data = dict(line.rstrip("\n").split("=", 1) for line in open(sys.argv[1]) if "=" in line)
 status, image, tag = data.get("last_status", ""), data.get("image_ref", ""), data.get("image_tag", "")
@@ -270,7 +270,7 @@ if (data.get("deploy_pipeline_id") != sys.argv[2]
         or not re.fullmatch(re.escape(sys.argv[3]) + r"@sha256:[0-9a-f]{64}", image)
         or not re.fullmatch(r"[A-Za-z0-9._-]+", tag)):
     raise SystemExit("本地待确认状态或镜像 digest 不匹配")
-print(status, image, tag)
+print(status, image, tag, data.get("source_commit", ""))
 PY
 ) || fail "本地部署状态核验失败"
     [ -n "$local_image_ref" ] && [ -n "$local_image_tag" ] || fail "本地部署状态核验失败"
@@ -313,7 +313,7 @@ PY
     if [ "$FLOW_DEPLOY_MODE" = "local" ]; then
       write_state "last_run_id=$run_id" "last_status=APPROVED_PENDING_DEPLOY" \
         "deploy_pipeline_id=$FLOW_PIPELINE_ID" "deploy_run_id=$run_id" \
-        "image_ref=$local_image_ref" "image_tag=$local_image_tag"
+        "image_ref=$local_image_ref" "image_tag=$local_image_tag" "source_commit=$local_source_commit"
     fi
     local rc=0
     wait_run "$run_id" || rc=$?
@@ -327,7 +327,7 @@ PY
       --container "$FLOW_CONTAINER" --image "$local_image_ref" \
       --expected-replicas "${FLOW_EXPECTED_REPLICAS:-1}"
   fi
-  write_state "last_run_id=$run_id" "last_status=DEPLOY_SUCCESS"
+  write_state "last_run_id=$run_id" "last_status=DEPLOY_SUCCESS" "source_commit=$local_source_commit"
 }
 
 cmd_status() {

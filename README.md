@@ -67,6 +67,8 @@ deploysys_gui.cmd
 
 首次保存项目后生成 `config/projects.local.yaml`；真实项目配置始终写入该私有文件。
 
+售后工单项目的测试 `dev`、生产 `release` 分支选择及发布后 `master` 收口见 [售后工单部署分支说明](deployment/service-order-branch-workflow.md)。菜单设置使用项目专用脚本，保留既有阿里云 Flow 和静态发布入口。
+
 首页菜单：
 
 ```text
