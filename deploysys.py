@@ -14,6 +14,7 @@ import re
 import signal
 import shutil
 import subprocess
+import sys
 import threading
 import uuid
 from dataclasses import dataclass
@@ -931,7 +932,7 @@ class CommandRunner:
             build_shell_command(command, str(env_cfg.get("shell") or "auto")),
             cwd=None,
             env=env,
-            stdin=subprocess.DEVNULL,
+            stdin=None if self.output_callback is None and sys.stdin.isatty() else subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=False,
