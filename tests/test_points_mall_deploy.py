@@ -127,7 +127,7 @@ class MenuTests(unittest.TestCase):
         other = {'id': 'other', 'services': [{'id': 'keep', 'targets': {}}]}
         project = {'id': 'jifen', 'services': [
             {'id': 'api-front', 'targets': {'test': {'commands': {'run': ['old']}}, 'prod': {'commands': {'run': ['old prod']}}}},
-            {'id': 'miniapp', 'targets': {'test': {'commands': {'run': ['cd /some/repo', 'bash scripts/upload-wechat.sh test']}}}},
+            {'id': 'miniapp', 'targets': {'test': {'commands': {'run': ['cd /some/repo\nbash scripts/upload-wechat.sh test']}}}},
             {'id': 'flow-points-mall-back-build', 'targets': {'prod': {'commands': {'run': ['cd /tool', 'FLOW_SERVICE=points-mall-back bash scripts/flow-release.sh build']}, 'status_commands': ['keep status']}}}
         ]}
         data = {'projects': [project, other]}

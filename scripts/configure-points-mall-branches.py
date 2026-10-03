@@ -52,6 +52,7 @@ def update_menu(data, tool_root, script_root):
                     continue
                 # 保留部署命令原文及私有路径。后台 OSS 构建脚本在 API 仓运行，
                 # 单独准备 admin 源分支后再准备 API 脚本分支。
+                lines = '\n'.join(lines).splitlines()
                 if len(lines) != 2 or not lines[0].startswith('cd '):
                     raise ConfigError('部署菜单结构变化：' + sid)
                 command = lines[-1]
