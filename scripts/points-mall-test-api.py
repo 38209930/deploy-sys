@@ -42,23 +42,34 @@ def restart_service(ssh, env, unit, port):
     return wait_ready(ssh, env, port)
 
 
-def main():
-    p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('service', choices=SERVICES)
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument('--check', action='store_true', help='仅显示非敏感目标，不 SSH、不构建、不发布')
-    mode.add_argument('--restart', action='store_true', help='重启指定测试 API 并等待 readiness')
-    a = p.parse_args()
-    directory, unit, port, script = SERVICES[a.service]
-    target = '/home/publish/jifen90/' + directory
-    print(f'test_target={HOST}:{port} directory={target} unit={unit}', flush=True)
-    if a.check:
-        return 0
-    if not a.restart:
-        repo = Path.cwd()
-        branch = subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip()
-        if branch != 'dev' or not (repo / 'scripts/deploy' / script).is_file():
-            raise RuntimeError('必须经积分商城 dev 分支部署入口执行')
+def read_runtime_status(ssh, env, target, unit, port):
+    """读取测试 API 的非敏感运行态；失败时不执行重启或发布。"""
+    live_url = f'http://{HOST}:{port}/health/live'
+    ready_url = f'http://{HOST}:{port}/health/ready'
+    command = (
+        f'directory_match=false; test "$(systemctl show {unit} -p WorkingDirectory --value)" = "{target}" '
+        '&& directory_match=true; '
+        f'active=false; systemctl is-active --quiet {unit} && active=true; '
+        f'environment_test=false; systemctl show {unit} -p Environment --value '
+        "| grep -Eq '(^| )(ASPNETCORE_ENVIRONMENT|DOTNET_ENVIRONMENT)=Test( |$)' && environment_test=true; "
+        f'test_files=false; test -s "{target}/appsettings.Test.json" '
+        f'&& test -s "{target}/appsettings.Test.Secrets.json" && test_files=true; '
+        f'live_http=$(curl --silent --output /dev/null --write-out "%{{http_code}}" --connect-timeout 2 --max-time 3 "{live_url}" || true); '
+        f'ready_http=$(curl --silent --output /dev/null --write-out "%{{http_code}}" --connect-timeout 2 --max-time 3 "{ready_url}" || true); '
+        f'printf "service={unit} active=%s directory_match=%s environment_test=%s test_files=%s live_http=%s ready_http=%s\\n" '
+        '"$active" "$directory_match" "$environment_test" "$test_files" "$live_http" "$ready_http"; '
+        '[ "$active" = true ] && [ "$directory_match" = true ] && [ "$environment_test" = true ] '
+        '&& [ "$test_files" = true ] && [ "$live_http" = 200 ] && [ "$ready_http" = 200 ]'
+    )
+    result = subprocess.run(ssh + [command], env=env, capture_output=True, text=True, timeout=35)
+    # 远端命令只输出上面固定的状态字段；不把 stderr（可能包含环境信息）带回菜单输出。
+    detail = result.stdout.strip()
+    if result.returncode:
+        raise RuntimeError('测试服务状态检查未通过' + (f'；{detail}' if detail else ''))
+    return detail
+
+
+def load_ssh_connection():
     # 只在进程内使用密码，不写入菜单、文件或日志。
     text = (WORKSPACE / 'depoy/dev-ecs.md').read_text()
     match = re.search(r'^\s*password\s*[:=：]\s*(.+?)\s*$', text, re.I | re.M)
@@ -69,6 +80,32 @@ def main():
     ssh = ['sshpass', '-e', 'ssh', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10',
            '-o', 'PreferredAuthentications=password,keyboard-interactive', '-o', 'PubkeyAuthentication=no',
            '-o', 'NumberOfPasswordPrompts=1', 'root@' + HOST]
+    return ssh, env
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('service', choices=SERVICES)
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--check', action='store_true', help='仅显示非敏感目标，不 SSH、不构建、不发布')
+    mode.add_argument('--status', action='store_true', help='只读检查指定测试 API 的实际运行态，不重启、不构建、不发布')
+    mode.add_argument('--restart', action='store_true', help='重启指定测试 API 并等待 readiness')
+    a = p.parse_args()
+    directory, unit, port, script = SERVICES[a.service]
+    target = '/home/publish/jifen90/' + directory
+    print(f'test_target={HOST}:{port} directory={target} unit={unit}', flush=True)
+    if a.check:
+        return 0
+    if a.status:
+        ssh, env = load_ssh_connection()
+        print(read_runtime_status(ssh, env, target, unit, port), flush=True)
+        return 0
+    if not a.restart:
+        repo = Path.cwd()
+        branch = subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip()
+        if branch != 'dev' or not (repo / 'scripts/deploy' / script).is_file():
+            raise RuntimeError('必须经积分商城 dev 分支部署入口执行')
+    ssh, env = load_ssh_connection()
     # 防止旧端口、旧目录或错误服务被选中；不读取服务器敏感配置内容。
     command = (f'test "$(systemctl show {unit} -p WorkingDirectory --value)" = "{target}" '
                f'&& systemctl show {unit} -p Environment --value | grep -q "{HOST}:{port}"')

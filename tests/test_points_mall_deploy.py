@@ -138,12 +138,25 @@ class MenuTests(unittest.TestCase):
         target = project['services'][0]['targets']
         self.assertIn('points-mall-test-api.py', target['test']['commands']['run'][0])
         self.assertIn('--restart', target['test']['commands']['restart'][0])
+        self.assertIn('--status', target['test']['status_commands'][0])
         self.assertEqual(target['prod']['commands']['run'][-1], 'exit 1')
         self.assertIn('$POINTS_MALL_SOURCE_DIR', project['services'][1]['targets']['test']['commands']['run'][0])
         self.assertEqual(project['services'][2]['targets']['prod']['status_commands'], ['keep status'])
         snapshot = copy.deepcopy(data)
         MENU.update_menu(data, ROOT, ROOT)
         self.assertEqual(data, snapshot)
+
+    def test_flow_menu_removes_deleted_release_worktree_path(self):
+        project = {'id': 'jifen', 'services': [
+            {'id': 'flow-points-mall-back-deploy', 'targets': {'prod': {'commands': {'run': [
+                'cd /tool',
+                "FLOW_SERVICE=points-mall-back FLOW_REPO_DIR='/Volumes/SSD/work/mall/积分商城/jifen-api-release' python3 /tool/scripts/points-mall-deploy.py prod /repo deploy -- bash scripts/flow-release.sh deploy",
+            ]}}}},
+        ]}
+        MENU.update_menu({'projects': [project]}, ROOT, ROOT)
+        command = project['services'][0]['targets']['prod']['commands']['run'][-1]
+        self.assertNotIn('jifen-api-release', command)
+        self.assertIn('points-mall-deploy.py', command)
 
     def test_test_targets_use_new_ports(self):
         for role, port in [('front', 3090), ('back', 3091)]:
@@ -164,6 +177,17 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         self.assertIn('systemctl restart jifen90.api', run.call_args_list[0].args[0][-1])
         self.assertIn('http://172.27.182.78:3090/health/ready', run.call_args_list[1].args[0][-1])
+
+    def test_runtime_status_reads_remote_state_without_restart(self):
+        response = subprocess.CompletedProcess(['ssh'], 0, 'service=jifen90.api active=true directory_match=true environment_test=true test_files=true live_http=200 ready_http=200\n', '')
+        with patch.object(POINTS_API.subprocess, 'run', return_value=response) as run:
+            result = POINTS_API.read_runtime_status(['ssh'], {'SSHPASS': 'test-only'}, '/home/publish/jifen90/api_front', 'jifen90.api', 3090)
+        self.assertIn('active=true', result)
+        command = run.call_args.args[0][-1]
+        self.assertIn('systemctl is-active --quiet jifen90.api', command)
+        self.assertIn('/health/live', command)
+        self.assertIn('/health/ready', command)
+        self.assertNotIn('systemctl restart', command)
 
 if __name__ == '__main__':
     unittest.main()

@@ -2,6 +2,7 @@
 """通过 ConfigStore 精确更新积分商城菜单，保留其他项目及状态命令。"""
 import argparse
 from pathlib import Path
+import re
 import shlex
 import sys
 
@@ -24,6 +25,9 @@ def update_menu(data, tool_root, script_root):
             action = sid.rsplit('-', 1)[-1]
             target = service['targets']['prod']
             lines = target['commands']['run']
+            # 旧菜单曾把已删除的 jifen-api-release 工作树写死在环境变量中。
+            # points-mall-deploy.py 会选择实际 release 工作树，菜单不应再携带该误导性路径。
+            lines[:] = [re.sub(r"(?:^|\s)FLOW_REPO_DIR=(?:'[^']*'|\"[^\"]*\"|[^\s]+)", '', line) for line in lines]
             if any('points-mall-deploy.py' in line for line in lines):
                 continue
             if len(lines) != 2 or ' bash scripts/flow-release.sh ' not in lines[-1]:
@@ -40,7 +44,7 @@ def update_menu(data, tool_root, script_root):
                     f' python3 {q(str(script_root / "scripts/points-mall-test-api.py"))} {role}']
                 target['commands']['restart'] = [
                     f'python3 {q(str(script_root / "scripts/points-mall-test-api.py"))} {role} --restart']
-                target['status_commands'] = [f'python3 {q(str(script_root / "scripts/points-mall-test-api.py"))} {role} --check']
+                target['status_commands'] = [f'python3 {q(str(script_root / "scripts/points-mall-test-api.py"))} {role} --status']
             if sid == 'api-front' and 'prod' in service['targets']:
                 service['targets']['prod']['commands']['run'] = [
                     "echo '停止：前台 API 尚未登记可核验的阿里云 Flow 流水线；旧 ECS 生产发布入口停用，请先完成流水线迁移。' >&2", 'exit 1']
