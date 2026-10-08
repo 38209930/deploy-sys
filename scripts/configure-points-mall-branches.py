@@ -38,6 +38,8 @@ def update_menu(data, tool_root, script_root):
             if target:
                 target['commands']['run'] = [f'python3 {wrapper} test {q(str(WORKSPACE / "jifen-api"))} deploy --'
                     f' python3 {q(str(script_root / "scripts/points-mall-test-api.py"))} {role}']
+                target['commands']['restart'] = [
+                    f'python3 {q(str(script_root / "scripts/points-mall-test-api.py"))} {role} --restart']
                 target['status_commands'] = [f'python3 {q(str(script_root / "scripts/points-mall-test-api.py"))} {role} --check']
             if sid == 'api-front' and 'prod' in service['targets']:
                 service['targets']['prod']['commands']['run'] = [
