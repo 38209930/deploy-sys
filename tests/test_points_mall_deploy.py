@@ -17,6 +17,7 @@ def load(name, filename):
 
 DEPLOY = load('points_deploy', 'points-mall-deploy.py')
 MENU = load('points_menu', 'configure-points-mall-branches.py')
+POINTS_API = load('points_api', 'points-mall-test-api.py')
 
 class BranchTests(unittest.TestCase):
     def setUp(self):
@@ -136,6 +137,7 @@ class MenuTests(unittest.TestCase):
         self.assertEqual(other, before)
         target = project['services'][0]['targets']
         self.assertIn('points-mall-test-api.py', target['test']['commands']['run'][0])
+        self.assertIn('--restart', target['test']['commands']['restart'][0])
         self.assertEqual(target['prod']['commands']['run'][-1], 'exit 1')
         self.assertIn('$POINTS_MALL_SOURCE_DIR', project['services'][1]['targets']['test']['commands']['run'][0])
         self.assertEqual(project['services'][2]['targets']['prod']['status_commands'], ['keep status'])
@@ -150,6 +152,18 @@ class MenuTests(unittest.TestCase):
             self.assertIn(str(port), result.stdout)
             self.assertNotIn('3040', result.stdout)
             self.assertNotIn('3041', result.stdout)
+
+    def test_restart_restarts_target_once_then_waits_for_readiness(self):
+        responses = [
+            subprocess.CompletedProcess(['ssh'], 0, 'service_active=active\n', ''),
+            subprocess.CompletedProcess(['ssh'], 0, 'readiness_http=200\n', ''),
+        ]
+        with patch.object(POINTS_API.subprocess, 'run', side_effect=responses) as run:
+            result = POINTS_API.restart_service(['ssh'], {'SSHPASS': 'test-only'}, 'jifen90.api', 3090)
+        self.assertEqual(result, 'readiness_http=200')
+        self.assertEqual(run.call_count, 2)
+        self.assertIn('systemctl restart jifen90.api', run.call_args_list[0].args[0][-1])
+        self.assertIn('http://172.27.182.78:3090/health/ready', run.call_args_list[1].args[0][-1])
 
 if __name__ == '__main__':
     unittest.main()
