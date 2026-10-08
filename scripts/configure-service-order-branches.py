@@ -10,10 +10,24 @@ from deploysys_store import ConfigStore, ConfigError
 
 WORKSPACE = Path('/Volumes/SSD/work/mall/售后工单系统')
 WRAPPER = ROOT / 'scripts/service-order-deploy.py'
+STATUS_VALIDATOR = '''import json, sys
+items = json.load(sys.stdin)
+bad = []
+for item in items:
+    name = item.get('service', 'unknown')
+    if not item.get('active') or item.get('environment') != 'Test' or not item.get('test_config') or not item.get('test_secrets'):
+        bad.append(name)
+    elif name != 'serviceorder.worker' and item.get('health_live') is not True:
+        bad.append(name)
+print(json.dumps(items, ensure_ascii=False))
+if bad:
+    print('测试运行态未通过：' + ','.join(bad), file=sys.stderr)
+    raise SystemExit(1)
+'''
 TEST_RUNTIME_STATUS = (
     'cd ' + shlex.quote(str(WORKSPACE)) + '\n'
     + 'bash ' + shlex.quote(str(WORKSPACE / 'service-order-api/scripts/deploy/migrate-test-runtime-config.sh'))
-    + ' status'
+    + ' status | python3 -c ' + shlex.quote(STATUS_VALIDATOR)
 )
 
 

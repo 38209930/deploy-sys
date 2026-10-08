@@ -1,5 +1,6 @@
 import copy
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -278,7 +279,18 @@ class MenuConfigurationTests(unittest.TestCase):
             command = services[service_id]['targets']['test']['status_commands']
             self.assertEqual(command, [menus.TEST_RUNTIME_STATUS])
             self.assertIn('migrate-test-runtime-config.sh', command[0])
-            self.assertTrue(command[0].endswith(' status'))
+            self.assertIn(' status | python3 -c ', command[0])
+            self.assertIn('测试运行态未通过', command[0])
+
+    def test_runtime_status_validator_returns_failure_for_unhealthy_service(self):
+        status = [
+            {'service': 'serviceorder.front', 'active': True, 'environment': 'Test', 'test_config': True, 'test_secrets': True, 'health_live': False},
+            {'service': 'serviceorder.admin', 'active': True, 'environment': 'Test', 'test_config': True, 'test_secrets': True, 'health_live': True},
+            {'service': 'serviceorder.worker', 'active': False, 'environment': 'Test', 'test_config': True, 'test_secrets': True, 'health_live': None},
+        ]
+        result = subprocess.run([sys.executable, '-c', menus.STATUS_VALIDATOR], input=json.dumps(status), text=True, capture_output=True)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn('serviceorder.front,serviceorder.worker', result.stderr)
 
     def test_single_multiline_command_block_preserves_structure(self):
         data = self.fixture()
