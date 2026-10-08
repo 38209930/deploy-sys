@@ -270,6 +270,16 @@ class MenuConfigurationTests(unittest.TestCase):
         menus.update_menu(data)
         self.assertEqual(data, old)
 
+    def test_test_api_entries_have_safe_remote_runtime_status(self):
+        data = self.fixture()
+        menus.update_menu(data)
+        services = {service['id']: service for service in data['projects'][1]['services']}
+        for service_id in ('api-front', 'api-back', 'worker'):
+            command = services[service_id]['targets']['test']['status_commands']
+            self.assertEqual(command, [menus.TEST_RUNTIME_STATUS])
+            self.assertIn('migrate-test-runtime-config.sh', command[0])
+            self.assertTrue(command[0].endswith(' status'))
+
     def test_single_multiline_command_block_preserves_structure(self):
         data = self.fixture()
         target = data['projects'][1]['services'][9]['targets']['test']

@@ -10,6 +10,11 @@ from deploysys_store import ConfigStore, ConfigError
 
 WORKSPACE = Path('/Volumes/SSD/work/mall/售后工单系统')
 WRAPPER = ROOT / 'scripts/service-order-deploy.py'
+TEST_RUNTIME_STATUS = (
+    'cd ' + shlex.quote(str(WORKSPACE)) + '\n'
+    + 'bash ' + shlex.quote(str(WORKSPACE / 'service-order-api/scripts/deploy/migrate-test-runtime-config.sh'))
+    + ' status'
+)
 
 
 def update_menu(data):
@@ -19,6 +24,11 @@ def update_menu(data):
     count = 0
     for service in projects[0]['services']:
         sid = service['id']
+        # 测试菜单必须展示实际远端运行态，不能只保留部署命令。
+        # 该脚本只输出服务、环境、配置文件存在性、端口和健康检查摘要，
+        # 不读取或输出任何配置值、密码或密钥。
+        if sid in ('api-front', 'api-back', 'worker') and 'test' in service['targets']:
+            service['targets']['test']['status_commands'] = [TEST_RUNTIME_STATUS]
         if sid.startswith('flow-service-order-') and sid.rsplit('-', 1)[-1] in ('push', 'build', 'deploy'):
             action = sid.rsplit('-', 1)[-1]
             repo = WORKSPACE / 'service-order-api'
