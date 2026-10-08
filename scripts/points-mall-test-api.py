@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""积分商城测试 API 发布；保留服务器配置，使用已授权文档中的 SSH 凭据。"""
+"""积分商城测试 API 发布与重启；保留服务器配置，使用授权文档中的 SSH 凭据。"""
 import argparse
 import os
 from pathlib import Path
@@ -16,20 +16,49 @@ SERVICES = {
 }
 
 
+def wait_ready(ssh, env, port):
+    readiness_url = f'http://{HOST}:{port}/health/ready'
+    readiness_command = (
+        'attempt=0; while [ "$attempt" -lt 30 ]; do '
+        f'if curl --fail --silent --output /dev/null --connect-timeout 1 --max-time 2 "{readiness_url}"; then '
+        'echo readiness_http=200; exit 0; fi; '
+        'attempt=$((attempt + 1)); sleep 2; done; '
+        f'code=$(curl --silent --output /dev/null --write-out "%{{http_code}}" '
+        f'--connect-timeout 1 --max-time 2 "{readiness_url}" || true); '
+        'echo readiness_failed_http=$code; exit 1'
+    )
+    result = subprocess.run(ssh + [readiness_command], env=env, capture_output=True, text=True, timeout=95)
+    if result.returncode:
+        detail = (result.stdout + result.stderr).strip()
+        raise RuntimeError('服务 readiness 未通过' + (f'；{detail}' if detail else ''))
+    return result.stdout.strip()
+
+
+def restart_service(ssh, env, unit, port):
+    restart_command = f'systemctl restart {unit} && systemctl is-active --quiet {unit} && echo service_active=active'
+    result = subprocess.run(ssh + [restart_command], env=env, capture_output=True, text=True, timeout=45)
+    if result.returncode:
+        raise RuntimeError('测试服务重启未确认成功')
+    return wait_ready(ssh, env, port)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('service', choices=SERVICES)
-    p.add_argument('--check', action='store_true', help='仅显示非敏感目标，不 SSH、不构建、不发布')
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument('--check', action='store_true', help='仅显示非敏感目标，不 SSH、不构建、不发布')
+    mode.add_argument('--restart', action='store_true', help='重启指定测试 API 并等待 readiness')
     a = p.parse_args()
     directory, unit, port, script = SERVICES[a.service]
     target = '/home/publish/jifen90/' + directory
     print(f'test_target={HOST}:{port} directory={target} unit={unit}', flush=True)
     if a.check:
         return 0
-    repo = Path.cwd()
-    branch = subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip()
-    if branch != 'dev' or not (repo / 'scripts/deploy' / script).is_file():
-        raise RuntimeError('必须经积分商城 dev 分支部署入口执行')
+    if not a.restart:
+        repo = Path.cwd()
+        branch = subprocess.check_output(['git', 'branch', '--show-current'], text=True).strip()
+        if branch != 'dev' or not (repo / 'scripts/deploy' / script).is_file():
+            raise RuntimeError('必须经积分商城 dev 分支部署入口执行')
     # 只在进程内使用密码，不写入菜单、文件或日志。
     text = (WORKSPACE / 'depoy/dev-ecs.md').read_text()
     match = re.search(r'^\s*password\s*[:=：]\s*(.+?)\s*$', text, re.I | re.M)
@@ -45,7 +74,11 @@ def main():
                f'&& systemctl show {unit} -p Environment --value | grep -q "{HOST}:{port}"')
     r = subprocess.run(ssh + [command], env=env, capture_output=True, timeout=30)
     if r.returncode:
-        raise RuntimeError('测试服务目录/端口核对失败，尚未发布')
+        raise RuntimeError('测试服务目录/端口核对失败，未执行操作')
+    if a.restart:
+        readiness = restart_service(ssh, env, unit, port)
+        print(f'测试服务重启完成，service_active=active {readiness}', flush=True)
+        return 0
     with tempfile.TemporaryDirectory(prefix='points-mall-test-') as tmp:
         env_file = Path(tmp) / 'deploy.test.env'
         env_file.write_text(f'''DEPLOY_TARGET=test
@@ -68,21 +101,8 @@ PRUNE_BACKUPS=0
             return r.returncode
     # 服务重启后可能需要数秒启动；轮询探活，不重复部署、不回滚。
     # 此检查不连接 Redis、不执行 SQL、不调用业务渠道。
-    readiness_url = f'http://{HOST}:{port}/health/ready'
-    readiness_command = (
-        'attempt=0; while [ "$attempt" -lt 30 ]; do '
-        f'if curl --fail --silent --output /dev/null --connect-timeout 1 --max-time 2 "{readiness_url}"; then '
-        'echo readiness_http=200; exit 0; fi; '
-        'attempt=$((attempt + 1)); sleep 2; done; '
-        f'code=$(curl --silent --output /dev/null --write-out "%{{http_code}}" '
-        f'--connect-timeout 1 --max-time 2 "{readiness_url}" || true); '
-        'echo readiness_failed_http=$code; exit 1'
-    )
-    r = subprocess.run(ssh + [readiness_command], env=env, capture_output=True, text=True, timeout=95)
-    if r.returncode:
-        detail = (r.stdout + r.stderr).strip()
-        raise RuntimeError('发布后 readiness 未通过；未自动重试部署或回滚' + (f'；{detail}' if detail else ''))
-    print('测试发布完成，' + r.stdout.strip(), flush=True)
+    readiness = wait_ready(ssh, env, port)
+    print('测试发布完成，' + readiness, flush=True)
     return 0
 
 
