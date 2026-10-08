@@ -66,12 +66,23 @@ PRUNE_BACKUPS=0
         r = subprocess.run(['bash', 'scripts/deploy/' + script], env=env)
         if r.returncode:
             return r.returncode
-    # SSH 内检查 readiness，不连接 Redis、不执行 SQL、不调用业务渠道。
-    r = subprocess.run(ssh + [f'curl --fail --silent --output /dev/null http://{HOST}:{port}/health/ready'],
-                       env=env, capture_output=True, timeout=30)
+    # 服务重启后可能需要数秒启动；轮询探活，不重复部署、不回滚。
+    # 此检查不连接 Redis、不执行 SQL、不调用业务渠道。
+    readiness_url = f'http://{HOST}:{port}/health/ready'
+    readiness_command = (
+        'attempt=0; while [ "$attempt" -lt 30 ]; do '
+        f'if curl --fail --silent --output /dev/null --connect-timeout 1 --max-time 2 "{readiness_url}"; then '
+        'echo readiness_http=200; exit 0; fi; '
+        'attempt=$((attempt + 1)); sleep 2; done; '
+        f'code=$(curl --silent --output /dev/null --write-out "%{{http_code}}" '
+        f'--connect-timeout 1 --max-time 2 "{readiness_url}" || true); '
+        'echo readiness_failed_http=$code; exit 1'
+    )
+    r = subprocess.run(ssh + [readiness_command], env=env, capture_output=True, text=True, timeout=95)
     if r.returncode:
-        raise RuntimeError('发布完成但 readiness 未通过，请检查对应服务；未自动重试或回退')
-    print('测试发布完成，readiness HTTP 200', flush=True)
+        detail = (r.stdout + r.stderr).strip()
+        raise RuntimeError('发布后 readiness 未通过；未自动重试部署或回滚' + (f'；{detail}' if detail else ''))
+    print('测试发布完成，' + r.stdout.strip(), flush=True)
     return 0
 
 
