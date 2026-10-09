@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 import yaml
+import deploysys_release as release
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
@@ -779,11 +780,52 @@ def run_action_commands(
     settings: dict[str, Any],
     output_callback: Callable[[str], None] | None = None,
     cancellation_token: CancellationToken | None = None,
+    release_plan: list[dict[str, Any]] | None = None,
+    release_selection: list[dict[str, str]] | None = None,
 ) -> tuple[list[CommandResult], Path]:
     runner = CommandRunner(settings, {}, output_callback)
     if cancellation_token:
         cancellation_token.register(runner)
-    result = runner.run_block(commands, project, service, target_name, target_cfg, action, cancellation_token)
+    def emit_preparation(text: str) -> None:
+        emit_line(output_callback, text)
+        with runner.log_path.open("a", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+    try:
+        plan = release.plan_release(target_name, commands, action, ROOT, DATA_DIR, project)
+        if plan is not None:
+            if release_plan is None:
+                if output_callback is not None:
+                    raise ConfigError("请先在部署菜单选择待合入 release 的分支。")
+                release_selection = release.prompt_selection(plan, prompt_text, emit_preparation)
+                if release_selection is None:
+                    raise ConfigError("已取消部署。")
+            elif plan != release_plan:
+                raise ConfigError("分支或构建记录已变化，请重新选择；未继续部署。")
+            if cancellation_token and cancellation_token.cancelled():
+                raise ConfigError("已取消部署。")
+            commands, check_flow = release.apply_release(plan, release_selection, commands, emit_preparation)
+            if check_flow:
+                state = release.state_for(commands, DATA_DIR)
+                if state.get("service") != release.flow_service(commands) or state.get("last_status") not in ("WAITING_CONFIRM", "APPROVED_PENDING_DEPLOY") or state.get("source_commit") != release.git(plan[0]["work"], "rev-parse", "HEAD"):
+                    raise ConfigError("Flow 镜像不对应当前 release，请先执行准备发布（推送并构建），再确认上线。")
+        snapshot = []
+        if release.is_build(commands, action):
+            if plan is not None:
+                snapshot = [{'repo': row['work'], 'common': release.common_repo(row['work']),
+                    'branch': 'release', 'head': release.git(row['work'], 'rev-parse', 'HEAD')} for row in plan]
+            else:
+                snapshot = release.build_snapshot(commands, ROOT)
+        result = runner.run_block(commands, project, service, target_name, target_cfg, action, cancellation_token)
+        if result.exit_code == 0 and snapshot:
+            state = release.state_for(commands, DATA_DIR)
+            if not release.flow_service(commands) or (state.get("service") == release.flow_service(commands) and state.get("source_commit") in {row["head"] for row in snapshot}):
+                try:
+                    release.record_build(snapshot, DATA_DIR, str(service.get("id", "")))
+                except (ConfigError, OSError) as exc:
+                    emit_preparation(f"命令执行成功，但构建成功记录未保存：{exc}；请勿因此重复部署。")
+    except (ConfigError, OSError) as exc:
+        emit_preparation(str(exc))
+        result = CommandResult("release 准备", 1, str(exc))
     results = [result]
     emit_line(output_callback, f"退出码: {result.exit_code}")
     if result.exit_code != 0:

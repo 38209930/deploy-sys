@@ -238,9 +238,53 @@ async function deleteSelected(kind) {
   dirty = false; applyState(data.state);
 }
 
+function selectReleaseBranches(plan) {
+  return new Promise(resolve => {
+    const dialog = document.createElement("dialog"); dialog.className = "release-dialog";
+    const title = document.createElement("h2"); title.textContent = "准备 release 分支"; dialog.append(title);
+    const hint = document.createElement("p");
+    hint.textContent = "将自动切换到 release。请选择要合并的分支；继续后会推送 release，再执行当前命令。合并后需重新构建，旧镜像无法直接上线。";
+    dialog.append(hint);
+    const choices = [];
+    plan.forEach(repo => {
+      const heading = document.createElement("p");
+      heading.textContent = `${repo.repo}：${repo.branch} → release`; dialog.append(heading);
+      if (!repo.candidates.length) {
+        const empty = document.createElement("p"); empty.textContent = "没有包含 release 尚未收录提交的分支。"; dialog.append(empty);
+      }
+      repo.candidates.forEach(branch => {
+        const label = document.createElement("label"); label.className = "release-choice";
+        const input = document.createElement("input"); input.type = "checkbox";
+        const text = document.createElement("span");
+        text.textContent = `${branch.name}${branch.aliases.length ? `（${branch.aliases.join("、")}）` : ""} ${branch.head.slice(0, 8)} · 多 ${branch.ahead} 个提交${branch.behind ? " · 已分叉" : ""} · ${branch.build ? `构建成功 ${branch.build.time}` : "当前提交未记录构建成功"}`;
+        label.append(input, text); dialog.append(label); choices.push({ input, repo: repo.repo, ref: branch.ref });
+      });
+    });
+    const footer = document.createElement("div"); footer.className = "toolbar";
+    const cancel = document.createElement("button"); cancel.textContent = "取消部署";
+    const proceed = document.createElement("button"); proceed.textContent = "继续";
+    const finish = value => { dialog.close(); dialog.remove(); resolve(value); };
+    cancel.onclick = () => finish(null);
+    proceed.onclick = () => finish(choices.filter(c => c.input.checked).map(({ repo, ref }) => ({ repo, ref })));
+    dialog.addEventListener("cancel", event => { event.preventDefault(); finish(null); });
+    footer.append(cancel, proceed); dialog.append(footer); document.body.append(dialog); dialog.showModal();
+  });
+}
+
 async function execute() {
   const endpoint = mode === "status" ? "/api/status-executions" : "/api/executions";
-  const data = await guarded($("executeBtn"), () => api(endpoint, { method: "POST", body: JSON.stringify({ project_id: selected.project, service_id: selected.service, target_name: selected.target }) }));
+  const request = { project_id: selected.project, service_id: selected.service, target_name: selected.target };
+  const data = await guarded($("executeBtn"), async () => {
+    let response = await api(endpoint, { method: "POST", body: JSON.stringify(request) });
+    if (response.release_plan) {
+      const selection = await selectReleaseBranches(response.release_plan);
+      if (selection === null) return null;
+      response = await api(endpoint, { method: "POST", body: JSON.stringify({ ...request,
+        release_plan: response.release_plan, release_command_hash: response.release_command_hash,
+        release_selection: selection }) });
+    }
+    return response;
+  });
   if (!data) return;
   $("log").textContent = "";
   connectExecution(data.execution);

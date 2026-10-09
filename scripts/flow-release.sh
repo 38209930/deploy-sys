@@ -156,7 +156,7 @@ wait_run() {
 
 cmd_push() {
   [ -n "$FLOW_REPO_DIR" ] || fail "push 需要设置 FLOW_REPO_DIR（etbst 本地为 /Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api）"
-  [ -d "$FLOW_REPO_DIR/.git" ] || fail "不是 git 仓库: $FLOW_REPO_DIR"
+  git -C "$FLOW_REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "不是 git 仓库: $FLOW_REPO_DIR"
   # 仅推送已提交的目标分支 ref；工作区未提交文件不会进入本次推送。
 
   git -C "$FLOW_REPO_DIR" fetch origin "$FLOW_RELEASE_BRANCH" >/dev/null 2>&1 \
