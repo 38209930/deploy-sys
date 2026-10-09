@@ -32,7 +32,7 @@ def flow_service(commands):
     return next((t.split('=', 1)[1] for t in tokens(commands) if t.startswith('FLOW_SERVICE=')), '')
 
 
-def source_repos(commands, root, project=None):
+def source_repos(commands, root, project=None, target_cfg=None):
     """只解析已有源码路径，不运行配置命令，也不读取环境文件。"""
     ts = tokens(commands)
     sid = flow_service(commands)
@@ -42,11 +42,15 @@ def source_repos(commands, root, project=None):
                 for lines in target.get('commands', {}).values():
                     if isinstance(lines, list) and flow_service(lines) == sid:
                         ts += tokens(lines)
+    explicit = (target_cfg or {}).get('release_repos')
+    if explicit is not None and (not isinstance(explicit, list) or not explicit or
+                                 any(not isinstance(p, str) for p in explicit)):
+        raise ConfigError('release_repos 必须是非空源码目录列表。')
     paths = []
     for i, t in enumerate(ts):
         if t.startswith(('FLOW_REPO_DIR=', 'JIFEN_ADMIN_ROOT=')):
             paths.append(t.split('=', 1)[1])
-        if t == '--related-repo' and i + 1 < len(ts):
+        if t in ('--related-repo', '--repo') and i + 1 < len(ts):
             paths.append(ts[i + 1])
         if Path(t).name in ('points-mall-deploy.py', 'service-order-deploy.py'):
             for j in range(i + 1, len(ts) - 1):
@@ -61,6 +65,8 @@ def source_repos(commands, root, project=None):
         if manifest.is_file():
             rows = (yaml.safe_load(manifest.read_text()) or {}).get('services', [])
             paths += [r['repo_dir'] for r in rows if r.get('id') == sid]
+    if explicit is not None:
+        paths = explicit
     repos = []
     common = set()
     tool_common = git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir', optional=True)
@@ -71,6 +77,8 @@ def source_repos(commands, root, project=None):
         if resolved == Path(root).resolve():
             continue
         toplevel = git(resolved, 'rev-parse', '--show-toplevel', optional=True)
+        if explicit is not None and not toplevel:
+            raise ConfigError(f'登记的源码目录不存在或不是 Git 仓库：{path}。')
         if toplevel:
             identity = common_repo(toplevel)
             if identity != tool_common and identity not in common:
@@ -81,15 +89,31 @@ def source_repos(commands, root, project=None):
 
 def is_build(commands, action=''):
     text = '\n'.join(commands)
-    return action == 'build' or bool(re.search(r'(?:flow-release\.sh\s+build|npm\s+run\s+build(?:[\s:]|$)|dotnet\s+(?:build|publish)\b|mvn\s+.*(?:package|install)\b)', text))
+    return action == 'build' or bool(re.search(r'(?:flow-release\.sh\s+(?:build|release)\b|npm\s+run\s+build(?:[\s:]|$)|dotnet\s+(?:build|publish)\b|mvn\s+.*(?:package|install)\b)', text))
 
 
-def needs_release(target, commands, action):
+def needs_release(target, commands, action, target_cfg=None):
     if target.lower() not in ('prod', 'production', '生产') or action in ('status', '状态检查', 'logs', 'start', 'stop', 'restart'):
         return False
-    text = '\n'.join(commands)
-    return action in ('deploy', 'build') or bool(re.search(
-        r'(?:flow-release\.sh\s+(?:push|build|deploy)\b|(?:points-mall|service-order)-deploy\.py\b|(?:deploy|upload)[\w./-]*\.(?:sh|py|js|ps1)\b|npm\s+run\s+(?:build|prodoss))', text, re.I))
+    if 'release_required' in (target_cfg or {}):
+        if not isinstance(target_cfg['release_required'], bool):
+            raise ConfigError('release_required 必须为布尔值。')
+        return target_cfg['release_required']
+    ts = tokens(commands)
+    for i, token in enumerate(ts):
+        name = Path(token).name.lower()
+        if re.search(r'(?:restart|rollback|health|migrate|service-control)', name):
+            continue
+        if name == 'flow-release.sh':
+            if i + 1 < len(ts) and ts[i + 1] in ('push', 'build', 'deploy', 'release'):
+                return True
+            continue
+        if re.match(r'(?:deploy|upload|release)[\w.-]*\.(?:sh|py|js|ps1)$', name) or name in ('points-mall-deploy.py', 'service-order-deploy.py', 'branch_flow.py'):
+            return True
+        if token == 'npm' and ts[i+1:i+2] == ['run'] and i + 2 < len(ts):
+            if re.match(r'(?:build|deploy|upload|release|prodoss|oss)(?:[:.-]|$)', ts[i+2]):
+                return True
+    return action in ('deploy', 'build')
 
 
 def evidence_path(data_dir):
@@ -126,9 +150,9 @@ def state_for(commands, data_dir):
     return {k: fields.get(k, '') for k in ('service', 'source_commit', 'last_status')}
 
 
-def build_snapshot(commands, root):
+def build_snapshot(commands, root, project=None, target_cfg=None):
     return [{'repo': r, 'common': common_repo(r), 'branch': git(r, 'branch', '--show-current'),
-             'head': git(r, 'rev-parse', 'HEAD')} for r in source_repos(commands, root)]
+             'head': git(r, 'rev-parse', 'HEAD')} for r in source_repos(commands, root, project, target_cfg)]
 
 
 def record_build(snapshot, data_dir, service_id):
@@ -165,15 +189,12 @@ def release_work(repo):
     return repo
 
 
-def plan_release(target, commands, action, root, data_dir, project=None):
-    if not needs_release(target, commands, action):
+def plan_release(target, commands, action, root, data_dir, project=None, target_cfg=None):
+    if not needs_release(target, commands, action, target_cfg):
         return None
-    repos = source_repos(commands, root, project)
+    repos = source_repos(commands, root, project, target_cfg)
     if not repos:
-        # 没有源码仓库的部署（例如只更新资源）不猜测 Git 路径。
-        if flow_service(commands):
-            raise ConfigError('无法定位 Flow 服务源码仓库，请检查服务清单或 FLOW_REPO_DIR。')
-        return None
+        raise ConfigError('无法定位部署源码仓库，请在执行目标登记 release_repos；未继续部署。')
     records = evidence(data_dir)
     flow_state = state_for(commands, data_dir)
     plan = []
@@ -185,6 +206,8 @@ def plan_release(target, commands, action, root, data_dir, project=None):
             raise ConfigError(f'远端缺少 release：{repo}；请先核对项目分支约定。')
         work = release_work(repo)
         clean(work)
+        if repo != work and not any(repo in cmd for cmd in commands):
+            raise ConfigError(f'release 被其他工作区占用，包装命令无法替换源码目录：{repo}；请使用可指定源码目录的入口。')
         local = git(repo, 'rev-parse', '--verify', 'refs/heads/release', optional=True)
         base = remote
         if local:
@@ -221,7 +244,7 @@ def plan_release(target, commands, action, root, data_dir, project=None):
 
 
 def prompt_selection(plan, prompt, emit):
-    emit('继续会切换、同步并推送 release；只合并您选择的分支。合并后需重新构建。')
+    emit('继续会切换、同步并推送 release，然后执行所选生产命令；只合并您选择的分支。ACS 发布会自动完成构建、确认上线和结果检查。')
     selected = []
     choices = []
     for row in plan:
@@ -297,9 +320,9 @@ def apply_release(plan, selected, commands, emit):
             emit('release 已推送并核验。')
         # 使用已登记的 release 工作区，不能在开发目录执行旧源码构建。
         if row['repo'] != work:
-            for quoted_old, quoted_new in ((shlex.quote(row['repo']), shlex.quote(work)),
-                                           ('"' + row['repo'] + '"', '"' + work + '"')):
-                updated = [cmd.replace(quoted_old, quoted_new) for cmd in updated]
+            # 同时覆盖带引号的仓库子目录，不改变其他同前缀目录。
+            pattern = re.escape(row['repo']) + r"(?=/|[\s'\";]|$)"
+            updated = [re.sub(pattern, lambda _: work, cmd) for cmd in updated]
     sid = flow_service(commands)
     if sid and re.search(r'flow-release\.sh\s+deploy\b', '\n'.join(commands)):
         # 合并后必须重新构建，不能拿旧 SHA 的镜像执行上线。

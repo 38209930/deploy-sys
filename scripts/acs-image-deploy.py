@@ -73,22 +73,29 @@ def main():
         new_repo = args.image.split("@sha256:")[0]
         if old_repo != new_repo:
             raise RuntimeError("拟发布镜像仓库与现网不一致")
-        if containers[0]["image"] == args.image:
-            print("镜像 digest 已在现网，无需更新")
-            return
+        already_current = containers[0]["image"] == args.image
         patch = [
             {"op": "test", "path": "/metadata/resourceVersion", "value": current["metadata"]["resourceVersion"]},
             {"op": "test", "path": "/spec/replicas", "value": replicas},
             {"op": "test", "path": "/spec/template/spec/containers/0/name", "value": args.container},
             {"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": args.image},
         ]
-        kubectl("patch", "deployment", args.deployment, "--type=json", "-p", json.dumps(patch))
+        if already_current:
+            print("镜像 digest 已在现网，继续检查 rollout 和副本状态")
+        else:
+            kubectl("patch", "deployment", args.deployment, "--type=json", "-p", json.dumps(patch))
         if replicas:
             kubectl("rollout", "status", f"deployment/{args.deployment}", "--timeout=300s")
         updated = json.loads(kubectl("get", "deployment", args.deployment, "-o", "json"))
         if (updated["spec"].get("replicas", 1) != replicas
                 or updated["spec"]["template"]["spec"]["containers"][0]["image"] != args.image):
             raise RuntimeError("上线后镜像或副本数回读不一致")
+        status = updated.get("status", {})
+        if replicas and (status.get("observedGeneration", 0) < updated["metadata"]["generation"]
+                         or status.get("updatedReplicas", 0) != replicas
+                         or status.get("readyReplicas", 0) != replicas
+                         or status.get("availableReplicas", 0) != replicas):
+            raise RuntimeError("上线后 Deployment 尚未全部更新并就绪")
         print(f"image_updated namespace={args.namespace} deployment={args.deployment} replicas={replicas} image={args.image}")
 
 

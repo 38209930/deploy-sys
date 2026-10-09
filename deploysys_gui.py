@@ -411,7 +411,7 @@ def start_execution(data: dict[str, Any], status: bool = False) -> dict[str, Any
     commands = target.get("status_commands") if status else (target.get("commands") or {}).get(deploysys.COMMAND_KEY)
     if not isinstance(commands, list) or not commands:
         raise ConfigError("当前执行目标没有可执行命令。")
-    plan = None if status else deploysys.release.plan_release(target_name, commands, "执行", deploysys.ROOT, deploysys.DATA_DIR, project)
+    plan = None if status else deploysys.release.plan_release(target_name, commands, "执行", deploysys.ROOT, deploysys.DATA_DIR, project, target)
     selection = None
     if plan is not None:
         command_hash = hashlib.sha256(json.dumps(commands, ensure_ascii=False).encode()).hexdigest()

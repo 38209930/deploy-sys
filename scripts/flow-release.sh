@@ -7,6 +7,7 @@ set -euo pipefail
 #   FLOW_PIPELINE_ID=12345 bash scripts/flow-release.sh push    # 推送配置的源分支到 Codeup
 #   FLOW_PIPELINE_ID=12345 FLOW_DEPLOY_PIPELINE_ID=67890 bash scripts/flow-release.sh build
 #   FLOW_DEPLOY_PIPELINE_ID=67890 FLOW_CONFIRM=yes bash scripts/flow-release.sh deploy
+#   FLOW_CONFIRM=yes bash scripts/flow-release.sh release   # 推送、构建、确认上线并验收
 #   FLOW_PIPELINE_ID=12345 bash scripts/flow-release.sh status  # 只读：最近运行状态
 #   bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml    # 按 YAML 创建/更新流水线
 #
@@ -131,7 +132,11 @@ wait_run() {
     waiting="$(printf '%s\n' "$snap" | grep '^WAITING_JOB ' | head -1 || true)"
     if [ -n "$waiting" ]; then
       echo "等待人工确认：${waiting#WAITING_JOB }"
-      echo "在云效控制台确认，或执行: FLOW_PIPELINE_ID=$FLOW_PIPELINE_ID FLOW_RUN_ID=$run_id FLOW_CONFIRM=yes bash scripts/flow-release.sh deploy"
+      if [ -n "${FLOW_EXPECTED_SOURCE_COMMIT:-}" ] && [ "${FLOW_CONFIRM:-no}" = "yes" ]; then
+        echo "本次发布已明确确认，将在镜像校验后继续上线"
+      else
+        echo "在云效控制台确认，或执行: FLOW_PIPELINE_ID=$FLOW_PIPELINE_ID FLOW_RUN_ID=$run_id FLOW_CONFIRM=yes bash scripts/flow-release.sh deploy"
+      fi
       return 2
     fi
     case "$overall" in
@@ -146,7 +151,7 @@ wait_run() {
     esac
     if [ "$elapsed" -ge "$FLOW_BUILD_TIMEOUT" ]; then
       echo "run_result=TIMEOUT run_id=$run_id"
-      return 1
+      return 3
     fi
     sleep "$FLOW_POLL_INTERVAL"
     elapsed=$((elapsed + FLOW_POLL_INTERVAL))
@@ -175,7 +180,9 @@ cmd_push() {
   else
     git -C "$FLOW_REPO_DIR" push origin "$FLOW_RELEASE_BRANCH"
   fi
-  write_state "pushed_commit=$local_head" "branch=$FLOW_RELEASE_BRANCH"
+  if [ "${1:-}" != "preserve-state" ]; then
+    write_state "pushed_commit=$local_head" "branch=$FLOW_RELEASE_BRANCH"
+  fi
 }
 
 cmd_build() {
@@ -193,15 +200,24 @@ cmd_build() {
     [ -n "$run_id" ] || fail "未取到 pipelineRunId: $resp"
     echo "build_triggered pipeline_id=$FLOW_PIPELINE_ID run_id=$run_id"
   fi
+  if [ -n "${FLOW_EXPECTED_SOURCE_COMMIT:-}" ]; then
+    write_state "last_status=BUILDING" "build_run_id=$run_id" "source_commit=$FLOW_EXPECTED_SOURCE_COMMIT"
+  fi
   echo "pipeline_url=$(pipeline_url)"
   local rc=0
   wait_run "$run_id" || rc=$?
   if [ "$rc" -eq 2 ]; then
+    [ -z "${FLOW_EXPECTED_SOURCE_COMMIT:-}" ] || fail "构建流水线停在确认卡点，尚未取得可上线镜像；已停止发布"
     # 卡在人工确认：保留状态后正常返回，由用户决定何时确认
     write_state "last_run_id=$run_id" "last_status=WAITING_CONFIRM"
     exit 0
   fi
-  [ "$rc" -eq 0 ] || exit "$rc"
+  if [ "$rc" -ne 0 ]; then
+    if [ "$rc" -eq 1 ] && [ -n "${FLOW_EXPECTED_SOURCE_COMMIT:-}" ]; then
+      write_state "last_status=BUILD_FAILED" "build_run_id=$run_id" "source_commit=$FLOW_EXPECTED_SOURCE_COMMIT"
+    fi
+    exit "$rc"
+  fi
   if [ -z "$FLOW_DEPLOY_PIPELINE_ID" ]; then
     write_state "last_run_id=$run_id" "last_status=BUILD_SUCCESS"
     return
@@ -216,6 +232,9 @@ cmd_build() {
   evidence="$(python3 "$SCRIPT_DIR/flow-build-evidence.py" "$run_detail" "$tags" "$FLOW_RELEASE_BRANCH")" \
     || fail "无法唯一关联本次构建与 ACR 镜像"
   read -r source_commit tag digest <<<"$evidence"
+  if [ -n "${FLOW_EXPECTED_SOURCE_COMMIT:-}" ]; then
+    [ "$source_commit" = "$FLOW_EXPECTED_SOURCE_COMMIT" ] || fail "构建源码提交与本次 release 不一致，禁止启动上线确认"
+  fi
   resp="$(aliyun cr get-repo-tag --instance-id "$FLOW_ACR_INSTANCE_ID" --repo-id "$FLOW_ACR_REPO_ID" \
     --tag "$tag" --region "$FLOW_REGION" --profile "$FLOW_PROFILE")"
   [ "$(json_get "$resp" "d['Digest']")" = "$digest" ] \
@@ -330,6 +349,55 @@ PY
   write_state "last_run_id=$run_id" "last_status=DEPLOY_SUCCESS" "source_commit=$local_source_commit"
 }
 
+cmd_release() {
+  [ "${FLOW_CONFIRM:-no}" = "yes" ] || fail "release 会完成生产上线，需要明确设置 FLOW_CONFIRM=yes"
+  require_pipeline
+  [[ "$FLOW_DEPLOY_PIPELINE_ID" =~ ^[0-9]+$ ]] || fail "完整发布需要 FLOW_DEPLOY_PIPELINE_ID"
+  [ "$FLOW_DEPLOY_MODE" = "local" ] && [ -n "$FLOW_ACR_INSTANCE_ID" ] && [ -n "$FLOW_ACR_REPO_ID" ] \
+    && [ -n "$FLOW_IMAGE_REPO" ] && [ -n "${FLOW_NAMESPACE:-}" ] \
+    && [ -n "${FLOW_DEPLOYMENT:-}" ] && [ -n "${FLOW_CONTAINER:-}" ] \
+    || fail "完整发布缺少 ACR/ACS 目标参数"
+  [ -n "$FLOW_REPO_DIR" ] || fail "完整发布需要 FLOW_REPO_DIR"
+  local head branch resume build_pipeline_id="$FLOW_PIPELINE_ID"
+  branch="$(git -C "$FLOW_REPO_DIR" branch --show-current)"
+  [ "$branch" = "$FLOW_RELEASE_BRANCH" ] || fail "请先通过部署菜单切换到 $FLOW_RELEASE_BRANCH"
+  head="$(git -C "$FLOW_REPO_DIR" rev-parse HEAD)"
+  # 推送不会擦除同一提交的待上线记录，失败后再次执行可以继续。
+  cmd_push preserve-state
+  FLOW_EXPECTED_SOURCE_COMMIT="$head"
+  resume="$(python3 - "$FLOW_STATE_DIR/$FLOW_SERVICE.env" "$FLOW_SERVICE" "$head" "$build_pipeline_id" "$FLOW_DEPLOY_PIPELINE_ID" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+data = dict(line.split('=', 1) for line in path.read_text().splitlines() if '=' in line) if path.is_file() else {}
+if data.get('service') == sys.argv[2] and data.get('source_commit') == sys.argv[3]:
+    if data.get('last_status') in ('WAITING_CONFIRM', 'APPROVED_PENDING_DEPLOY') and data.get('deploy_pipeline_id') == sys.argv[5]:
+        print('deploy')
+    elif data.get('last_status') == 'BUILDING' and data.get('pipeline_id') == sys.argv[4] and data.get('build_run_id', '').isdigit():
+        print(data['build_run_id'])
+PY
+)"
+  if [ "$resume" = "deploy" ]; then
+    echo "复用当前 release 的待上线镜像，继续上线"
+  else
+    if [ -n "$resume" ]; then
+      FLOW_BUILD_RUN_ID="$resume"
+      echo "继续跟踪本次构建：run_id=$resume"
+    fi
+    echo "开始构建并核验镜像"
+    cmd_build
+  fi
+  # 构建/等待期间源码可能变化；不能把另一提交的镜像误当成当前发布。
+  git -C "$FLOW_REPO_DIR" fetch --quiet origin "$FLOW_RELEASE_BRANCH"
+  [ "$(git -C "$FLOW_REPO_DIR" branch --show-current)" = "$branch" ] \
+    && [ "$(git -C "$FLOW_REPO_DIR" rev-parse HEAD)" = "$head" ] \
+    && [ "$(git -C "$FLOW_REPO_DIR" rev-parse "origin/$FLOW_RELEASE_BRANCH")" = "$head" ] \
+    || fail "发布期间 release 已变化，已停止上线，请重新执行"
+  echo "确认上线并检查 ACS 更新结果"
+  cmd_deploy
+  echo "发布完成：service=$FLOW_SERVICE commit=$head"
+}
+
 cmd_status() {
   check_identity
   require_pipeline
@@ -399,6 +467,7 @@ case "${1:-}" in
   push) shift; cmd_push "$@" ;;
   build) shift; cmd_build "$@" ;;
   deploy) shift; cmd_deploy "$@" ;;
+  release) shift; cmd_release "$@" ;;
   status) shift; cmd_status "$@" ;;
   apply) shift; cmd_apply "$@" ;;
   *)
