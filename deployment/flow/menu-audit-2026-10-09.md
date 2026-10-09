@@ -6,6 +6,8 @@
 
 ACS 清单包含 12 个项目、20 个服务：
 
+SMS Core 的前台 API、后台 API 和 Worker 使用 ECS 部署；后台前端沿用原静态资源发布入口。SMS Core 不在上述 ACS 清单中，分支检查不会改变其部署方式。
+
 | 项目 | ACS 服务数 |
 | --- | ---: |
 | ETBST、Yangu、DDMP、STOPMP、DGYE、VET | 各 1 |
@@ -31,19 +33,19 @@ ACS 清单包含 12 个项目、20 个服务：
 
 若当前提交的构建等待超时，下次执行继续跟踪该次构建。若同一提交已生成待上线镜像，下次执行复用该镜像；提交变化则重新构建。镜像已写入但 rollout 失败时，再次执行仍检查就绪状态，不能仅凭镜像相同返回成功。既有副本数检查保留，DGYE／VET 的零副本不会自动扩容。
 
-## 尚存的分支阻碍
+## release 分支补齐（2026-10-09）
 
-本机引用检查及只读 `git ls-remote --heads origin refs/heads/release` 核验确认，下列五个源码仓库的远端均没有 release，影响八个现有生产入口：
+首次排查发现下列五个源码仓库缺少远端 release，影响八个现有生产入口。主公随后明确要求在对应远端补齐分支；当前结果如下：
 
-| 源码仓库 | 影响入口 | 本机 release |
+| 源码仓库 | 影响入口 | release 起点／结果 |
 | --- | --- | --- |
-| SMS Core `sms-api` | 前台 API、后台 API、Worker | 缺失 |
-| SMS Core `sms-admin` | 后台前端 | 缺失 |
-| AI 自习室 `ai-study-store-admin` | 后台 OSS | 缺失 |
-| AI 自习室 `ai-study-store-biz` | 业务 H5 | 已有，远端缺失 |
-| 浩丰盛账号 `group-account` | Web OSS、API ECS 发布 | 缺失 |
+| SMS Core `sms-api` | 前台 API、后台 API、Worker（ECS） | 从远端 master `c072632a288d` 建立并推送，回读一致 |
+| SMS Core `sms-admin` | 后台前端 | 从远端 master `ce1838867bba` 建立并推送，回读一致 |
+| AI 自习室 `ai-study-store-admin` | 后台 OSS | 从远端 master `39e330927db0` 建立并推送，回读一致 |
+| AI 自习室 `ai-study-store-biz` | 业务 H5 | 将既有本地 release `a721c5a7c334` 推送为远端 release，回读一致 |
+| 浩丰盛账号 `group-account` | Web OSS、API ECS 发布 | 现有 `release/current` 和 `release/v1.0.0`～`v1.4.0` 与根分支名 release 冲突，等待确认将这六条分支改名为 `releases/...` 后，从远端 master 建立 release |
 
-这些入口会明确停止并提示缺失分支。应先按各业务项目约定确认 release 的起点并建立远端分支，再发布。本次没有代替业务项目选择发布基线、合并开发代码或创建这些分支。
+四个已补齐仓库的本地／远端 release 为 0/0，开发工作区与未提交改动保持原状。SMS Core 两个 `feat/first-send-readiness` 开发分支没有自动合入 release。AI 自习室业务 H5 的既有 release 与 master 已分叉（release 独有 2 个提交、master 独有 30 个提交），本次保留该分支起点和历史，没有自动合并；后续发布前应在分支选择中审查源码差异。
 
 ## 验证与边界
 
