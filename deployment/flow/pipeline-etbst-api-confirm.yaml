@@ -1,0 +1,39 @@
+# pipeline-name: etbst-api-固定digest人工确认
+# 由本地发布命令在 ACR API 核对本次构建 tag 的 digest 后启动；确认后本机 kubectl 更新镜像。
+# IMAGE_DIGEST_REF 必须是目标 ACR 仓库的 VPC 域名及 sha256 摘要；运行时传入。
+
+variables:
+  - key: IMAGE_DIGEST_REF
+    value: ""
+  - key: SOURCE_COMMIT
+    value: ""
+
+stages:
+  preflight_stage:
+    name: 校验发布输入
+    jobs:
+      preflight_job:
+        name: 校验镜像digest
+        runsOn: public/cn-beijing
+        steps:
+          verify_digest:
+            name: 校验目标镜像与源码提交
+            step: Command
+            with:
+              run: |
+                set -eu
+                printf '%s' "$IMAGE_DIGEST_REF" | grep -Eq '^ruishi-prod-registry-vpc[.]cn-beijing[.]cr[.]aliyuncs[.]com/ruishi-java-prod/etbst-api@sha256:[0-9a-f]{64}$'
+                printf '%s' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+                printf 'source_commit=%s\nimage_digest_ref=%s\n' "$SOURCE_COMMIT" "$IMAGE_DIGEST_REF"
+
+  confirm_stage:
+    name: 人工确认
+    jobs:
+      confirm_job:
+        name: 上线前确认
+        component: ManualValidate
+        with:
+          validatorType: users
+          validateMethod: and
+          validators:
+            - 203420990220401362
