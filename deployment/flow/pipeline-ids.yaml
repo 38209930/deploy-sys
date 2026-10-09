@@ -1,0 +1,59 @@
+# 云效 Flow 流水线 ID；构建与人工确认分离。
+pipelines:
+  yangu-api:
+    build: 5300550
+    confirm: 5300551
+  m1x-api:
+    build: 5300552
+    confirm: 5300553
+  m1x-worker:
+    build: 5300554
+    confirm: 5300555
+  ddmp-api:
+    build: 5300556
+    confirm: 5300557
+  stopmp-api:
+    build: 5300558
+    confirm: 5300559
+  dgye-api:
+    build: 5300560
+    confirm: 5300561
+  vet-api:
+    build: 5300562
+    confirm: 5300563
+  new-retail-front:
+    build: 5300564
+    confirm: 5300565
+  new-retail-back:
+    build: 5300566
+    confirm: 5300567
+  new-retail-worker:
+    build: 5300568
+    confirm: 5300569
+  points-mall-back:
+    build: 5300570
+    confirm: 5300571
+  points-mall-worker:
+    build: 5300572
+    confirm: 5300573
+  points-mall-front:
+    build: 5312498
+    confirm: 5312499
+  service-order-front:
+    build: 5300574
+    confirm: 5300575
+  service-order-back:
+    build: 5300576
+    confirm: 5300577
+  service-order-worker:
+    build: 5300578
+    confirm: 5300579
+  ai-study-back:
+    build: 5300580
+    confirm: 5300581
+  ai-study-worker:
+    build: 5300583
+    confirm: 5300584
+  agent-query-api:
+    build: 5300585
+    confirm: 5300586

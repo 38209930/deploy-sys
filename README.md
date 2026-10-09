@@ -67,6 +67,8 @@ deploysys_gui.cmd
 
 首次保存项目后生成 `config/projects.local.yaml`；真实项目配置始终写入该私有文件。
 
+售后工单项目的测试 `dev`、生产 `release` 分支选择及发布后 `master` 收口见 [售后工单部署分支说明](deployment/service-order-branch-workflow.md)。菜单设置使用项目专用脚本，保留既有阿里云 Flow 和静态发布入口。
+
 首页菜单：
 
 ```text
@@ -194,3 +196,21 @@ deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new ->
 `scripts/deploy-vet-api-systemd.sh` 发布 VET 的 `vet-api.service` 并检查 8040 端口。VET 包含高频定时任务，发布前必须确认旧实例已经退出。
 
 `scripts/deploy-dgye-api-systemd.sh` 发布 DGYE 的 `dgye-api.service` 并检查 8030 端口。DGYE 尚未拆分定时任务，切换时禁止新旧实例重叠运行。
+
+## 云效 Flow 发布命令（ACS/ACR 生产）
+
+生产 api/worker 服务已迁入北京 ACS（镜像在 ACR `ruishi-java-prod` / `ruishi-dotnet-prod`），上述 `scripts/deploy-*-systemd.sh` 的 SSH+systemd 流程仅保留用于开发测试。生产发布改为本地触发云效 Flow 流水线：Codeup `release` 分支 → 构建镜像 push ACR → 人工确认卡点 → 固定 digest 更新 ACS Deployment。**流水线手动触发，push 不自动构建。**
+
+命令入口 `scripts/flow-release.sh`（子命令 `push | build | deploy | status | apply`），通过阿里云 CLI 调用云效 OpenAPI，显式 `--profile ruishi-prod-acr --region cn-beijing` 并核验账号。ACS 服务在 deploySys 中统一只有三个入口：`准备发布（推送并构建）`、`确认上线`、`发布与运行状态`；最后一项同时读取两条 Flow 流水线和 ACS Deployment/Pod 运行态。认证失效执行 `aliyun configure --profile ruishi-prod-acr`。
+
+详细说明、现网核实结论与待办的控制台授权清单见 [deployment/flow-release-commands.md](deployment/flow-release-commands.md)；流水线 YAML 模板见 [deployment/flow/pipeline-etbst-api.yaml](deployment/flow/pipeline-etbst-api.yaml)。
+
+## ACS 当前资源占用查询
+
+每个 ACS 服务的“发布与运行状态”会包含容器 CPU/内存近期用量、requests/limits、Pod IP、Ready、重启及上次退出原因。命令也可独立执行：
+
+```bash
+python3 scripts/acs-resource-usage.py --namespace points-mall --deployment points-mall-front
+```
+
+使用指定生产 Profile，经阿里云 API 获取临时 ACS 访问配置，自动清理；需要 OpenVPN 可达集群私有 API 及 metrics-server。查询只读，不启动业务、不修改资源。零副本显示无 Pod；指标不可用会提示并返回非零，不能解释为零用量。该命令不提供历史峰值或 CPU 限流统计。`python3 scripts/sync-flow-menus.py` 可同步各服务的本机菜单。

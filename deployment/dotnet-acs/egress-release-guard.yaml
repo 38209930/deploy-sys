@@ -1,0 +1,45 @@
+# 集群共用规则；先在诊断 Namespace 绑定验证，再按网络清单逐 Namespace 绑定。
+# 按已迁移的业务 Namespace 逐项绑定；不覆盖系统 Namespace 或范围外资源。
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ruishi-egress-deployment-vswitch
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+        scope: Namespaced
+  validations:
+    - expression: >-
+        has(object.spec.template.metadata.annotations) &&
+        'network.alibabacloud.com/vswitch-ids' in object.spec.template.metadata.annotations &&
+        object.spec.template.metadata.annotations['network.alibabacloud.com/vswitch-ids'].split(',').size() == 2 &&
+        object.spec.template.metadata.annotations['network.alibabacloud.com/vswitch-ids'].split(',').exists(v, v == 'vsw-2zevd832gq3313j6gv5sj') &&
+        object.spec.template.metadata.annotations['network.alibabacloud.com/vswitch-ids'].split(',').exists(v, v == 'vsw-2zesy6off4gy39tqripzp')
+      message: "Deployment Pod 模板必须明确指定两个已接入 NAT 的 vSwitch；业务镜像回退须保留当前选址。"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ruishi-egress-pod-vswitch
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+        scope: Namespaced
+  validations:
+    - expression: >-
+        !has(object.metadata.annotations) ||
+        !('network.alibabacloud.com/vswitch-ids' in object.metadata.annotations) ||
+        (object.metadata.annotations['network.alibabacloud.com/vswitch-ids'].split(',').size() <= 2 &&
+         object.metadata.annotations['network.alibabacloud.com/vswitch-ids'].split(',').all(v,
+           v in ['vsw-2zevd832gq3313j6gv5sj', 'vsw-2zesy6off4gy39tqripzp']))
+      message: "Pod 不得显式选择旧网段或未纳入 NAT 的 vSwitch；不写注解时由 acs-profile 注入。"

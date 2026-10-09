@@ -1,0 +1,56 @@
+# 统一网络配置来源；当前状态需以发布前 ACS API 实时读回为准。
+accountId: "1442361567788059"
+region: cn-beijing
+clusterId: cebc88343a44b4d759aa983a47b787835
+vpcId: vpc-2zervez1jgscsglpenrzo
+natGatewayId: ngw-2zetnd6golba2sju2q7jo
+egressEip: 39.96.67.239
+egressRouteTableId: vtb-2zedknif7nxu7z397b4o6
+mongoPrivateRoute:
+  cidr: 10.0.0.0/24
+  nextHopId: pcc-i6zwr0k50cr119ezen
+annotation: network.alibabacloud.com/vswitch-ids
+vswitches:
+  - id: vsw-2zevd832gq3313j6gv5sj
+    cidr: 172.31.240.0/24
+    zone: cn-beijing-k
+  - id: vsw-2zesy6off4gy39tqripzp
+    cidr: 172.28.64.0/24
+    zone: cn-beijing-i
+namespaces:
+  ai-study:
+    state: already-on-nat
+    deployments: [ai-study-back, ai-study-worker]
+  service-order:
+    state: already-on-nat
+    deployments: [service-order-front, service-order-back, service-order-worker]
+  points-mall:
+    state: already-on-nat
+    deployments: [points-mall-back, points-mall-worker]
+  yangu-api:
+    state: already-on-nat
+    deployments: [yangu-api]
+  m1x-api:
+    state: already-on-nat
+    deployments: [m1x-api, m1x-worker]
+  new-retail:
+    state: already-on-nat
+    deployments: [new-retail-front, new-retail-back, new-retail-worker]
+  agent-query:
+    state: already-on-nat
+    deployments: [agent-query-api]
+  stopmp-api:
+    state: already-on-nat
+    deployments: [stopmp-api]
+  etbst-api:
+    state: already-on-nat
+    deployments: [etbst-api]
+  ddmp-api:
+    state: already-on-nat
+    deployments: [ddmp-api]
+  dgye-api:
+    state: zero-replica-new-template
+    deployments: [dgye-api]
+  vet-api:
+    state: zero-replica-new-template
+    deployments: [vet-api]
