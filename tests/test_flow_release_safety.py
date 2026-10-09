@@ -70,22 +70,36 @@ class FlowMenuTests(unittest.TestCase):
         self.assertEqual(target["commands"]["run"][-2:], ["echo push", "echo build"])
         self.assertEqual(target["status_commands"][-2:], ["echo flow", "echo acs"])
 
-    def test_flow_entries_have_three_actions_and_keep_the_confirmation_boundary(self):
+    def test_flow_entry_completes_release_and_keeps_explicit_production_confirmation(self):
         row = {"id": "points-mall-front", "name": "积分商城前台 API", "kind": "dotnet",
                "repo_dir": "/workspace/jifen-api", "branch": "release",
                "acr_id": "repo-id", "namespace": "points-mall", "deployment": "points-mall-front",
                "container": "points-mall-front", "replicas": 1}
         entries = menus.flow_entries(row, {"build": 101, "confirm": 102})
-        self.assertEqual([item["id"] for item in entries], [
-            "flow-points-mall-front-prepare", "flow-points-mall-front-deploy", "flow-points-mall-front-status",
-        ])
-        prepare = entries[0]["targets"]["prod"]["commands"]["run"]
-        deploy = entries[1]["targets"]["prod"]["commands"]["run"][-1]
-        self.assertIn("flow-release.sh push", prepare[-2])
-        self.assertIn("flow-release.sh build", prepare[-1])
-        self.assertIn("FLOW_CONFIRM=yes", deploy)
-        self.assertIn("flow-release.sh deploy", deploy)
+        self.assertEqual([item["id"] for item in entries], ["flow-points-mall-front-release"])
+        target = entries[0]["targets"]["prod"]
+        command = target["commands"]["run"][-1]
+        self.assertIn("FLOW_CONFIRM=yes", command)
+        self.assertIn("flow-release.sh release", command)
+        self.assertIn("FLOW_REPO_DIR=/workspace/jifen-api", command)
+        self.assertEqual(target['release_repos'], ['/workspace/jifen-api'])
+        self.assertEqual(len(target['status_commands']), 4)
         self.assertTrue(all("logs" not in item["id"] and "resources" not in item["id"] for item in entries))
+
+    def test_all_acs_services_replace_old_actions_without_dropping_other_services(self):
+        services = yaml.safe_load((ROOT / 'deployment/flow/services.yaml').read_text())['services']
+        ids = yaml.safe_load((ROOT / 'deployment/flow/pipeline-ids.yaml').read_text())['pipelines']
+        data = {'projects': [{'id': 'etbst', 'services': [
+            {'id': 'api-flow-build', 'targets': {'prod': {}}},
+            {'id': 'api-logs', 'targets': {'prod': {'commands': {'run': ['echo logs']}}}}]}]}
+        first = menus.update_menu(data, services, ids)
+        snapshot = yaml.safe_dump(first)
+        second = menus.update_menu(first, services, ids)
+        self.assertEqual(yaml.safe_dump(second), snapshot)
+        generated = [s for p in second['projects'] for s in p['services'] if s['id'].startswith('flow-')]
+        self.assertEqual(len(generated), len(services))
+        self.assertTrue(all(s['id'].endswith('-release') for s in generated))
+        self.assertEqual([s['id'] for s in second['projects'][0]['services']][-1], 'api-logs')
 
 
 class PointsMallFrontConfigTests(unittest.TestCase):

@@ -1,6 +1,7 @@
 # ACS 发布目标清单。Flow pipeline ID 见 multi-project-release.md。
 # repo_dir 仅供本机菜单使用，不包含凭据。
 services:
+  - {group: etbst, name: ETBST API, id: etbst-api, kind: java, repo: ddmp/et-bst-api.git, repo_dir: /Volumes/SSD/work/ddmp/prod/stopmp/etbst/etbst-api, branch: release, dockerfile: Dockerfile, acr_id: crr-gkqkb2np05u435bf, namespace: etbst-api, deployment: etbst-api, container: etbst-api, replicas: 1}
   - {group: yangu, name: Yangu API, id: yangu-api, kind: java, repo: yangu-api.git, repo_dir: /Volumes/SSD/work/ddmp/prod/yangu-prod/api, branch: release, dockerfile: Dockerfile, acr_id: crr-7eg2q1ccbyn326lv, namespace: yangu-api, deployment: yangu-api, container: yangu-api, replicas: 1}
   - {group: m1x, name: M1X API, id: m1x-api, kind: java, repo: m1x-mp/m1x-api.git, repo_dir: /Volumes/SSD/work/ddmp/prod/stopmp/M1-X/m1x-api-release, branch: release, dockerfile: Dockerfile.api, acr_id: crr-nvuwwmvp3yl6251q, namespace: m1x-api, deployment: m1x-api, container: m1x-api, replicas: 1}
   - {group: m1x, name: M1X Worker, id: m1x-worker, kind: java, repo: m1x-mp/m1x-api.git, repo_dir: /Volumes/SSD/work/ddmp/prod/stopmp/M1-X/m1x-api-release, branch: release, dockerfile: Dockerfile.worker, acr_id: crr-7uns9jn34ldb8tq8, namespace: m1x-api, deployment: m1x-worker, container: m1x-worker, replicas: 1}

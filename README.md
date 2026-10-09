@@ -180,7 +180,9 @@ python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 
 未提交业务改动、分支分叉、合并冲突或等待选择期间的分支更新会停止部署，不自动 stash/reset 或覆盖文件。允许已跟踪环境文件的未暂存本地差异，Git 切换本身仍会阻止覆盖。release 被其他 worktree 占用时使用该工作区，并将源码命令路径切换过去。工具自身的仓库不会被当作业务源码仓库。测试菜单继续使用原 dev 流程；状态、日志、启停命令不进入合并提示。
 
-Flow 确认上线要求镜像 `source_commit` 与当前 release 完全一致。选择合并分支导致提交变化后，先重新执行“准备发布（推送并构建）”，再确认上线；不会自动把旧镜像发布成新代码。本功能只在用户执行菜单时运行。本次开发验证未启动生产流水线或执行业务发布。
+ACS 服务统一选择“发布”：确认分支选择后，自动推送 release、构建镜像、核对源码与 digest、通过上线卡点、更新 ACS 并检查 rollout。镜像 `source_commit` 必须与当前 release 完全一致；提交变化后自动重新构建。同一提交的构建超时可继续跟踪，待上线镜像可复用；上线失败后再次执行会继续验收，不能仅凭镜像已相同判定成功。本功能只在用户执行菜单时运行。
+
+父目录包装脚本可用目标级 `release_repos` 明确登记源码仓库，`release_required: true` 明确启用发布前分支选择。生产部署找不到源码仓库时停止并提示配置问题；状态、日志、重启、回滚和健康检查不触发分支合并。全量菜单排查结果见 [2026-10-09 排查记录](deployment/flow/menu-audit-2026-10-09.md)。
 
 下面是直接调用旧 Java 脚本的源码选择规则；通过生产菜单执行时，前置步骤已经准备好 release。
 
@@ -211,13 +213,13 @@ deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new ->
 
 生产 api/worker 服务已迁入北京 ACS（镜像在 ACR `ruishi-java-prod` / `ruishi-dotnet-prod`），上述 `scripts/deploy-*-systemd.sh` 的 SSH+systemd 流程仅保留用于开发测试。生产发布改为本地触发云效 Flow 流水线：Codeup `release` 分支 → 构建镜像 push ACR → 人工确认卡点 → 固定 digest 更新 ACS Deployment。**流水线手动触发，push 不自动构建。**
 
-命令入口 `scripts/flow-release.sh`（子命令 `push | build | deploy | status | apply`），通过阿里云 CLI 调用云效 OpenAPI，显式 `--profile ruishi-prod-acr --region cn-beijing` 并核验账号。ACS 服务在 deploySys 中统一只有三个入口：`准备发布（推送并构建）`、`确认上线`、`发布与运行状态`；最后一项同时读取两条 Flow 流水线和 ACS Deployment/Pod 运行态。认证失效执行 `aliyun configure --profile ruishi-prod-acr`。
+命令入口 `scripts/flow-release.sh`（子命令 `release | push | build | deploy | status | apply`），通过阿里云 CLI 调用云效 OpenAPI，显式 `--profile ruishi-prod-acr --region cn-beijing` 并核验账号。ACS 服务在 deploySys 中只有一个“发布”入口；同一服务的“状态检查”读取构建、确认两条 Flow 流水线及 ACS Deployment/Pod 运行态。`release` 要求显式 `FLOW_CONFIRM=yes`，菜单已配置该参数，执行前显示生产发布说明。认证失效执行 `aliyun configure --profile ruishi-prod-acr`。
 
 详细说明、现网核实结论与待办的控制台授权清单见 [deployment/flow-release-commands.md](deployment/flow-release-commands.md)；流水线 YAML 模板见 [deployment/flow/pipeline-etbst-api.yaml](deployment/flow/pipeline-etbst-api.yaml)。
 
 ## ACS 当前资源占用查询
 
-每个 ACS 服务的“发布与运行状态”会包含容器 CPU/内存近期用量、requests/limits、Pod IP、Ready、重启及上次退出原因。命令也可独立执行：
+每个 ACS 服务的“状态检查”会包含容器 CPU/内存近期用量、requests/limits、Pod IP、Ready、重启及上次退出原因。命令也可独立执行：
 
 ```bash
 python3 scripts/acs-resource-usage.py --namespace points-mall --deployment points-mall-front
