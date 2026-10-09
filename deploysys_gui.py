@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import secrets
 import socket
 import threading
@@ -65,6 +66,8 @@ class ExecutionManager:
         target: dict[str, Any],
         action: str,
         commands: list[str],
+        release_plan: list[dict[str, Any]] | None = None,
+        release_selection: list[dict[str, str]] | None = None,
     ) -> Execution:
         with self._lock:
             if self._active_id and not self._executions[self._active_id].done:
@@ -89,6 +92,8 @@ class ExecutionManager:
                     settings,
                     emit,
                     execution.cancellation,
+                    release_plan,
+                    release_selection,
                 )
                 result = results[-1] if results else None
                 with self._lock:
@@ -406,8 +411,20 @@ def start_execution(data: dict[str, Any], status: bool = False) -> dict[str, Any
     commands = target.get("status_commands") if status else (target.get("commands") or {}).get(deploysys.COMMAND_KEY)
     if not isinstance(commands, list) or not commands:
         raise ConfigError("当前执行目标没有可执行命令。")
-    execution = EXECUTIONS.start(project, service, target_name, target, "status" if status else "run", commands)
+    plan = None if status else deploysys.release.plan_release(target_name, commands, "执行", deploysys.ROOT, deploysys.DATA_DIR, project)
+    selection = None
+    if plan is not None:
+        command_hash = hashlib.sha256(json.dumps(commands, ensure_ascii=False).encode()).hexdigest()
+        if "release_plan" not in data:
+            return {"ok": True, "release_plan": plan, "release_command_hash": command_hash}
+        if data["release_plan"] != plan or data.get("release_command_hash") != command_hash:
+            raise ConfigError("配置、分支或构建记录已变化，请重新执行并选择分支。")
+        selection = data.get("release_selection")
+        if not isinstance(selection, list):
+            raise ConfigError("缺少分支选择，请重新执行。")
+    execution = EXECUTIONS.start(project, service, target_name, target, "status" if status else "run", commands, plan, selection)
     return {"ok": True, "execution": EXECUTIONS._summary(execution)}
+
 
 
 def cancel_execution(data: dict[str, Any]) -> dict[str, Any]:
