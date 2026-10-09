@@ -145,6 +145,36 @@ class ReleaseSelectionTests(unittest.TestCase):
             self.assertIsNone(release.plan_release(target, commands, action, self.tool, self.data))
         self.assertEqual(self.g(self.repo, 'branch', '--show-current'), 'dev')
 
+    def test_custom_frontend_scripts_and_explicit_sources_are_checked(self):
+        for script in ('oss', 'deploy:server', 'release:h5', 'build:prod'):
+            commands = [f'cd {shlex.quote(str(self.repo))}', 'npm run ' + script]
+            self.assertTrue(release.needs_release('prod', commands, 'run'))
+        commands = [f'python3 branch_flow.py --repo {shlex.quote(str(self.repo))} prod -- npm run build:prod']
+        self.assertEqual(release.source_repos(commands, self.tool), [str(self.repo)])
+        config = {'release_repos': [str(self.repo)], 'release_required': True}
+        plan = release.plan_release('prod', ['bash scripts/custom.sh'], 'run', self.tool, self.data, target_cfg=config)
+        self.assertEqual(plan[0]['repo'], str(self.repo))
+
+    def test_monitor_rollback_restart_and_migration_inside_deploy_directory_do_not_switch(self):
+        for script in ('restart-live-api-front.sh', 'rollback-web.sh', 'health-check.sh', 'migrate-api.sh'):
+            commands = [f'cd {shlex.quote(str(self.repo))}', f'bash scripts/deploy/{script} prod']
+            self.assertFalse(release.needs_release('prod', commands, 'run'))
+
+    def test_missing_deploy_source_fails_explicitly(self):
+        with self.assertRaisesRegex(ConfigError, 'release_repos'):
+            release.plan_release('prod', ['bash deploy-api.sh'], 'run', self.tool, self.data)
+
+    def test_worktree_subdirectory_is_rewritten_and_hidden_wrapper_is_blocked(self):
+        work = self.root / 'release checkout'
+        self.g(self.repo, 'worktree', 'add', str(work), 'release')
+        commands = [f'cd {shlex.quote(str(self.repo / "subdir"))}', 'npm run build:prod']
+        config = {'release_repos': [str(self.repo)]}
+        plan = release.plan_release('prod', commands, 'run', self.tool, self.data, target_cfg=config)
+        updated, _ = release.apply_release(plan, [], commands, lambda _: None)
+        self.assertIn(str(work / 'subdir'), updated[0])
+        with self.assertRaisesRegex(ConfigError, '包装命令'):
+            release.plan_release('prod', ['bash deploy-api.sh'], 'run', self.tool, self.data, target_cfg=config)
+
     def test_flow_manifest_resolves_repo_and_build_state_marks_exact_commit(self):
         head = self.advance()
         folder = self.tool / 'deployment/flow'

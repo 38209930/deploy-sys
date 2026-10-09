@@ -791,7 +791,7 @@ def run_action_commands(
         with runner.log_path.open("a", encoding="utf-8") as fh:
             fh.write(text + "\n")
     try:
-        plan = release.plan_release(target_name, commands, action, ROOT, DATA_DIR, project)
+        plan = release.plan_release(target_name, commands, action, ROOT, DATA_DIR, project, target_cfg)
         if plan is not None:
             if release_plan is None:
                 if output_callback is not None:
@@ -814,7 +814,7 @@ def run_action_commands(
                 snapshot = [{'repo': row['work'], 'common': release.common_repo(row['work']),
                     'branch': 'release', 'head': release.git(row['work'], 'rev-parse', 'HEAD')} for row in plan]
             else:
-                snapshot = release.build_snapshot(commands, ROOT)
+                snapshot = release.build_snapshot(commands, ROOT, project, target_cfg)
         result = runner.run_block(commands, project, service, target_name, target_cfg, action, cancellation_token)
         if result.exit_code == 0 and snapshot:
             state = release.state_for(commands, DATA_DIR)

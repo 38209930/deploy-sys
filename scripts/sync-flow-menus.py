@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG = ROOT / "config/projects.local.yaml"
 FLOW = ROOT / "deployment/flow"
 PROJECTS = {
+    "etbst": ("ETBST", "java"),
     "yangu": ("Yangu", "java"),
     "m1x": ("M1X", "java"),
     "ddmp": ("DDMP", "java"),
@@ -26,6 +27,7 @@ EXISTING = {
     "stopmp": "stop", "points-mall": "jifen", "new-retail": "newsale", "ai-study": "ai-study-room",
 }
 REMOVE = {
+    "etbst": {"api-flow-push", "api-flow-build", "api-flow-deploy", "api-acs-resources"},
     "stopmp": {"api-new", "api", "api-restart"},
     "vet": {"api-new", "api", "api-restart"},
     "dgye": {"api-new", "api", "api-restart"},
@@ -55,7 +57,7 @@ def entry(sid, name, kind, command, status=None):
 
 
 def flow_entries(row, pipeline_ids):
-    """为一个 ACS 角色生成精简后的发布、上线和状态入口。"""
+    """每个 ACS 服务只有发布入口，状态查询放在同一目标。"""
     sid, branch = row["id"], row["branch"]
     build_id, confirm_id = pipeline_ids["build"], pipeline_ids["confirm"]
     image_repo = ("ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/"
@@ -66,8 +68,6 @@ def flow_entries(row, pipeline_ids):
                  f"--namespace {shlex.quote(row['namespace'])} " +
                  f"--deployment {shlex.quote(row['deployment'])}")
     status = [flow_status, confirm_status, resources]
-    push = env(FLOW_PIPELINE_ID=build_id, FLOW_SERVICE=sid, FLOW_REPO_DIR=row["repo_dir"],
-               FLOW_RELEASE_BRANCH=branch) + " bash scripts/flow-release.sh push"
     build_values = dict(FLOW_PIPELINE_ID=build_id, FLOW_DEPLOY_PIPELINE_ID=confirm_id,
                         FLOW_RELEASE_BRANCH=branch, FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn",
                         FLOW_ACR_REPO_ID=row["acr_id"], FLOW_IMAGE_REPO=image_repo,
@@ -75,24 +75,17 @@ def flow_entries(row, pipeline_ids):
     if row["kind"] == "java":
         # Java 多模块首次构建的依赖解析可能接近默认的一小时本地等待上限。
         build_values["FLOW_BUILD_TIMEOUT"] = 7200
-    build = env(**build_values) + " bash scripts/flow-release.sh build"
-    deploy = env(FLOW_DEPLOY_PIPELINE_ID=confirm_id, FLOW_SERVICE=sid, FLOW_DEPLOY_MODE="local",
-                 FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn", FLOW_ACR_REPO_ID=row["acr_id"],
-                 FLOW_IMAGE_REPO=image_repo, FLOW_NAMESPACE=row["namespace"],
-                 FLOW_DEPLOYMENT=row["deployment"], FLOW_CONTAINER=row["container"],
-                 FLOW_EXPECTED_REPLICAS=row["replicas"], FLOW_CONFIRM="yes") + " bash scripts/flow-release.sh deploy"
+    build_values.update(FLOW_REPO_DIR=row["repo_dir"], FLOW_NAMESPACE=row["namespace"],
+                        FLOW_DEPLOYMENT=row["deployment"], FLOW_CONTAINER=row["container"],
+                        FLOW_EXPECTED_REPLICAS=row["replicas"], FLOW_CONFIRM="yes")
+    command = env(**build_values) + " bash scripts/flow-release.sh release"
     prefix = f"flow-{sid}"
-    return [
-        entry(f"{prefix}-prepare", f"{row['name']} 准备发布（推送并构建）", row["kind"], [push, build], status),
-        entry(f"{prefix}-deploy", f"{row['name']} 确认上线", row["kind"], deploy, status),
-        entry(f"{prefix}-status", f"{row['name']} 发布与运行状态", row["kind"], status, status),
-    ]
+    item = entry(f"{prefix}-release", f"{row['name']} 发布", row["kind"], command, status)
+    item['targets']['prod'].update(release_repos=[row['repo_dir']], release_required=True)
+    return [item]
 
 
-def main():
-    services = yaml.safe_load((FLOW / "services.yaml").read_text(encoding="utf-8"))["services"]
-    ids = yaml.safe_load((FLOW / "pipeline-ids.yaml").read_text(encoding="utf-8"))["pipelines"]
-    data = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+def update_menu(data, services, ids):
     projects = data["projects"]
     lookup = {project["id"]: project for project in projects}
     by_group = {}
@@ -125,27 +118,50 @@ def main():
             generated_entries.extend(flow_entries(row, ids[row["id"]]))
         project["services"] = generated_entries + retained
 
-    etbst = lookup["etbst"]
-    etbst["services"] = [item for item in etbst["services"] if item["id"] != "api-acs-resources"]
-    etbst["services"].append(entry("api-acs-resources", "ETBST API ACS 资源占用", "java",
-        "python3 scripts/acs-resource-usage.py --namespace etbst-api --deployment etbst-api"))
-    for item in etbst["services"]:
-        command = item["targets"]["prod"]["commands"]["run"]
-        if item["id"] == "api-flow-deploy":
-            image_repo = "ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/ruishi-java-prod/etbst-api"
-            command[-1] = (env(FLOW_DEPLOY_PIPELINE_ID=5300396, FLOW_SERVICE="etbst-api", FLOW_DEPLOY_MODE="local",
-                               FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn", FLOW_ACR_REPO_ID="crr-gkqkb2np05u435bf",
-                               FLOW_IMAGE_REPO=image_repo, FLOW_NAMESPACE="etbst-api", FLOW_DEPLOYMENT="etbst-api",
-                               FLOW_CONTAINER="etbst-api", FLOW_EXPECTED_REPLICAS=1, FLOW_CONFIRM="yes")
-                           + " bash scripts/flow-release.sh deploy")
-    etbst_build = next(item for item in etbst["services"] if item["id"] == "api-flow-build")
-    build_cmd = etbst_build["targets"]["prod"]["commands"]["run"]
-    if "FLOW_DEPLOY_MODE=local" not in build_cmd[-1]:
-        build_cmd[-1] = build_cmd[-1].replace(" bash scripts/flow-release.sh build", " FLOW_DEPLOY_MODE=local bash scripts/flow-release.sh build")
-
     order = ["etbst", "yangu", "m1x", "ddmp", "stop", "dgye", "vet", "newsale", "jifen",
              "service-order", "ai-study-room", "agent-query"]
     data["projects"] = [lookup[key] for key in order] + [p for p in projects if p["id"] not in order]
+    configure_sources(data)
+    return data
+
+
+def configure_sources(data):
+    """父目录包装脚本的源码目录须明确登记，避免在错误仓库切换分支。"""
+    apollo = "/Volumes/SSD/work/mall/apollo/prod"
+    sms = "/Volumes/SSD/work/mall/smscore"
+    study = "/Volumes/SSD/work/mall/ai自习室/prod@aliyun"
+    sources = {
+        ('apollo', 'api-front'): [apollo + '/api.netcore-net10'],
+        ('apollo', 'api-back'): [apollo + '/api.netcore-net10'],
+        ('apollo', 'worker'): [apollo + '/api.netcore-net10'],
+        ('apollo', 'admin-pc'): [apollo + '/pc'],
+        ('sms-core', 'api-public'): [sms + '/sms-api'],
+        ('sms-core', 'api-back'): [sms + '/sms-api'],
+        ('sms-core', 'worker'): [sms + '/sms-api'],
+        ('sms-core', 'admin-pc'): [sms + '/sms-admin'],
+        ('ai-study-room', 'admin-oss'): [study + '/ai-study-store-admin'],
+    }
+    for project in data['projects']:
+        for service in project.get('services', []):
+            target = service.get('targets', {}).get('prod')
+            if not target:
+                continue
+            key = (project['id'], service['id'])
+            if key in sources:
+                target.update(release_repos=sources[key], release_required=True)
+            if key[0] == 'ai-study-room' and key[1] in ('API-front', 'admin-oss'):
+                target['commands']['run'] = [line.replace(study + '/ai-study-api/RuishiStore', study + '/ai-study-api')
+                                              for line in target['commands']['run']]
+            if key == ('ai-study-room', 'admin-oss'):
+                lines = target['commands']['run']
+                if not any('AI_STUDY_ADMIN_ROOT=' in line for line in lines):
+                    lines[-1] = env(AI_STUDY_ADMIN_ROOT=sources[key][0]) + ' ' + lines[-1]
+
+
+def main():
+    services = yaml.safe_load((FLOW / "services.yaml").read_text(encoding="utf-8"))["services"]
+    ids = yaml.safe_load((FLOW / "pipeline-ids.yaml").read_text(encoding="utf-8"))["pipelines"]
+    data = update_menu(yaml.safe_load(CONFIG.read_text(encoding="utf-8")), services, ids)
     CONFIG.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False, width=1000), encoding="utf-8")
     print(f"updated={CONFIG} services={len(services)} projects={len(data['projects'])}")
 
