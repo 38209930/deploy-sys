@@ -17,9 +17,9 @@
 
 ## 发布路径
 
-1. 在项目菜单选择对应服务的「准备发布（推送并构建）」。它先将本地已提交的 `release` 推到 Codeup，再启动云效手动构建并推送至 ACR；构建命令核对唯一源码提交、当前运行时间内唯一 tag、ACR 回读 digest，随后启动独立人工确认流水线。Flow 本身不随 push 自动构建；新零售 ACR 已开启 `release` 自动构建时，不要为同一提交同时启动两条构建路径。
-2. 审查提交、tag、digest 与目标服务后，选择「确认上线」。该菜单显式设置 `FLOW_CONFIRM=yes`，通过人工卡点，再用本机兼容的 `kubectl 1.36.1` 和 15 分钟 ACS 临时配置仅更新 Deployment 镜像字段，回读镜像与副本数。
-3. 任意阶段选择「发布与运行状态」，可一次读取构建 Flow、确认 Flow 以及 ACS Deployment/Pod 资源和重启情况。需要查看日志时直接运行 `scripts/etbst-logs.py` 并传入目标 namespace、deployment、container，不再为每个服务固定生成独立日志菜单项。
+1. 在项目菜单选择对应服务的「发布」，查看生产发布提示并选择需要合入 release 的分支，继续执行。菜单自动切换或使用已有 release 工作区，同步并推送所选源码。
+2. 同一个命令自动完成 Flow 构建、唯一源码提交与 ACR digest 核验、确认卡点、ACS 镜像更新和 rollout 验收。菜单显式设置 `FLOW_CONFIRM=yes`。同一提交的未结束构建可继续跟踪，已构建的待上线镜像可复用；提交变化后重新构建。Flow 本身不随 push 自动构建；新零售 ACR 自动构建仍是独立路径，不要同时人工触发另一条构建。
+3. 同一服务选择「状态检查」，可读取构建 Flow、确认 Flow 以及 ACS Deployment/Pod 资源和重启情况。需要查看日志时直接运行 `scripts/etbst-logs.py` 并传入目标 namespace、deployment、container。
 
 ETBST 已有构建流水线 `5300352`，人工确认流水线 `5300396` 已更新为仅确认。本机菜单也改用相同的本机镜像更新路径。原 Flow `KubectlSetImage` 配置 `kubectl 1.27.9`，与当前 ACS API Server `1.36.1` 差距过大，故暂不用于更新生产镜像。
 
@@ -27,6 +27,7 @@ ETBST 已有构建流水线 `5300352`，人工确认流水线 `5300396` 已更�
 
 | 服务 | 分支 | Dockerfile | ACR 仓库 ID | ACS Namespace / Deployment / 容器 | 副本 | 构建 ID | 确认 ID |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: |
+| ETBST API | `release` | `Dockerfile` | `crr-gkqkb2np05u435bf` | `etbst-api / etbst-api / etbst-api` | 1 | 5300352 | 5300396 |
 | Yangu API | `release` | `Dockerfile` | `crr-7eg2q1ccbyn326lv` | `yangu-api / yangu-api / yangu-api` | 1 | 5300550 | 5300551 |
 | M1X API | `release` | `Dockerfile.api` | `crr-nvuwwmvp3yl6251q` | `m1x-api / m1x-api / m1x-api` | 1 | 5300552 | 5300553 |
 | M1X Worker | `release` | `Dockerfile.worker` | `crr-7uns9jn34ldb8tq8` | `m1x-api / m1x-worker / m1x-worker` | 1 | 5300554 | 5300555 |
@@ -58,4 +59,4 @@ ETBST 已有构建流水线 `5300352`，人工确认流水线 `5300396` 已更�
 
 ## 验收范围
 
-当前清单包含 19 个服务、38 条 Flow 流水线定义。本次已创建并取得积分商城前台构建／确认流水线 ID `5312498`／`5312499`；其手动触发和人工确认策略由入库 YAML 与本地安全测试覆盖。云效 `GetPipeline` 的当前 CLI 请求返回路径错误，未把该失败误记为定义回读成功。菜单与安全拒绝路径做了本地验证。配置阶段尚未触发本次新增流水线的首次云端构建或业务验收；后续上线结果另见上方验收记录。
+2026-10-09 当前清单统一登记 20 个服务及 40 条构建／确认流水线（包含既有 ETBST 两条流水线）。17 个项目菜单和 51 个生产发布命令已排查，20 个 ACS 服务均改为单个发布入口。本次 86 项相关测试通过，包括模拟云效/ACS 的完整发布、构建超时续跑、源码不匹配拒绝上线和 rollout 失败重试；未触发真实云端构建或生产镜像更新。缺失 release 分支等实际阻碍见 [菜单排查记录](menu-audit-2026-10-09.md)。历史首次上线结果见上方验收记录。

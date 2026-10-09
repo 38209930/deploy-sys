@@ -243,7 +243,7 @@ function selectReleaseBranches(plan) {
     const dialog = document.createElement("dialog"); dialog.className = "release-dialog";
     const title = document.createElement("h2"); title.textContent = "准备 release 分支"; dialog.append(title);
     const hint = document.createElement("p");
-    hint.textContent = "将自动切换到 release。请选择要合并的分支；继续后会推送 release，再执行当前命令。合并后需重新构建，旧镜像无法直接上线。";
+    hint.textContent = "请选择要合并的分支。继续后会切换、同步并推送 release，然后执行所选生产命令。ACS 发布会自动构建、确认上线并检查结果；同一提交的待上线镜像可直接复用。";
     dialog.append(hint);
     const choices = [];
     plan.forEach(repo => {

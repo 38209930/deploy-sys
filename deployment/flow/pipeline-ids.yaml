@@ -1,5 +1,8 @@
 # 云效 Flow 流水线 ID；构建与人工确认分离。
 pipelines:
+  etbst-api:
+    build: 5300352
+    confirm: 5300396
   yangu-api:
     build: 5300550
     confirm: 5300551

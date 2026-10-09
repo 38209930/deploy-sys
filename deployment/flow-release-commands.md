@@ -1,6 +1,6 @@
 # 云效 Flow 发布命令（API/Worker → ACR/ACS）
 
-**现行方案（2026-09-27）：** ETBST 及后续 18 个服务的构建流水线仍手动触发；构建后核对唯一 tag/digest 并进入独立 Flow 人工确认流水线。确认通过后，使用本机 `kubectl 1.36.1` 和短时 ACS 访问配置只更新镜像。原 ETBST Flow `KubectlSetImage` 使用 `kubectl 1.27.9`，已从当前确认流水线移除。下方早期试点记录保留为历史；服务映射、流水线 ID 和现行菜单用法见[多项目发布清单](flow/multi-project-release.md)。
+**现行方案（2026-10-09）：** 20 个 ACS 服务在 deploySys 中统一选择“发布”，确认分支选择后自动完成推送、构建、镜像核验、确认上线与 rollout 检查。底层仍保留独立构建和确认流水线，流水线不随 push 自动触发。相同提交的未结束构建或待上线镜像可继续使用，源码变化后重新构建。状态查询在同一服务的“状态检查”中。下方早期试点记录保留为历史；服务映射及 ID 见[多项目发布清单](flow/multi-project-release.md)，本次排查与验证边界见[菜单排查记录](flow/menu-audit-2026-10-09.md)。
 
 状态：2026-09-27 更新。生产 api/worker 服务已迁入北京 ACS（镜像在 ACR），本地不再打包部署到单机 ECS；本篇记录 deploySys 的云效 Flow 远程发布命令与试点结果。试点项目 **etbst-api**。.NET 项目的 ACS 运维文档仍在 [dotnet-acs](dotnet-acs/) 目录。
 
@@ -13,8 +13,8 @@
                          └─▶ 本机 kubectl 1.36.1：固定 digest 更新 ACS Deployment 镜像
 ```
 
-- **不做 push 自动构建**：流水线手动触发。`build` 构建完成后核对镜像并启动部署流水线，停在人工确认；`deploy` 才通过卡点。
-- 本地命令：`scripts/flow-release.sh`，子命令 `push | build | deploy | status | apply`。
+- **不做 push 自动构建**：流水线由发布命令启动。日常使用 `release` 完成全流程；手工分步操作仍可用 `build` 构建并停在确认卡点，再用 `deploy` 上线。
+- 本地命令：`scripts/flow-release.sh`，子命令 `release | push | build | deploy | status | apply`。
 - 认证：阿里云 CLI，显式 `--profile ruishi-prod-acr --region cn-beijing`（默认 Profile 属其他账号，禁止省略）；每次操作前 STS 核对账号 `1442361567788059`。凭据失效执行 `aliyun configure --profile ruishi-prod-acr`。
 - 云效组织：`svision100的代码库`，OrganizationId `659a5cefd64a2eb2dceb72f3`（脚本默认值；与 etbst Codeup 仓库相同组织）。
 
@@ -108,5 +108,5 @@ Java 服务（ACS 在用）：dgye-api、vet-api（0 副本）、stopmp-api、et
 ## 风险与边界
 
 - 云效免费版有构建时长额度，全量接入前评估用量；ACR 经济版构建并发限制与 Flow 无关（Flow 构建在 Flow Runner，push 不受限）。
-- 部署卡点人工确认不自动化跳过；`deploy` 必须显式 `FLOW_CONFIRM=yes`。
+- `release` 和 `deploy` 必须显式 `FLOW_CONFIRM=yes`。菜单在执行前说明此次生产发布的范围，继续后由命令通过 Flow 确认卡点；单独运行未确认的命令会停止。
 - Worker 类 Deployment（m1x-worker 等）上线前仍须按交接文档确认旧实例停机与在途任务，流水线只负责镜像更新。
