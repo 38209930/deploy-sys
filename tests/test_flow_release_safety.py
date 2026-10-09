@@ -63,6 +63,56 @@ class FlowMenuTests(unittest.TestCase):
         self.assertEqual(target["status_commands"][-1], "echo status")
         self.assertNotIn("status_commands", target["commands"])
 
+    def test_command_blocks_keep_all_release_steps_in_one_menu_action(self):
+        item = menus.entry("flow-api-prepare", "API 准备发布", "java", ["echo push", "echo build"],
+                           ["echo flow", "echo acs"])
+        target = item["targets"]["prod"]
+        self.assertEqual(target["commands"]["run"][-2:], ["echo push", "echo build"])
+        self.assertEqual(target["status_commands"][-2:], ["echo flow", "echo acs"])
+
+    def test_flow_entries_have_three_actions_and_keep_the_confirmation_boundary(self):
+        row = {"id": "points-mall-front", "name": "积分商城前台 API", "kind": "dotnet",
+               "repo_dir": "/workspace/jifen-api", "branch": "release",
+               "acr_id": "repo-id", "namespace": "points-mall", "deployment": "points-mall-front",
+               "container": "points-mall-front", "replicas": 1}
+        entries = menus.flow_entries(row, {"build": 101, "confirm": 102})
+        self.assertEqual([item["id"] for item in entries], [
+            "flow-points-mall-front-prepare", "flow-points-mall-front-deploy", "flow-points-mall-front-status",
+        ])
+        prepare = entries[0]["targets"]["prod"]["commands"]["run"]
+        deploy = entries[1]["targets"]["prod"]["commands"]["run"][-1]
+        self.assertIn("flow-release.sh push", prepare[-2])
+        self.assertIn("flow-release.sh build", prepare[-1])
+        self.assertIn("FLOW_CONFIRM=yes", deploy)
+        self.assertIn("flow-release.sh deploy", deploy)
+        self.assertTrue(all("logs" not in item["id"] and "resources" not in item["id"] for item in entries))
+
+
+class PointsMallFrontConfigTests(unittest.TestCase):
+    def test_points_mall_flow_uses_the_real_release_worktree_for_three_roles(self):
+        services = yaml.safe_load((ROOT / "deployment/flow/services.yaml").read_text())["services"]
+        rows = [row for row in services if row["group"] == "points-mall"]
+        self.assertEqual([row["id"] for row in rows], ["points-mall-front", "points-mall-back", "points-mall-worker"])
+        self.assertTrue(all(row["repo_dir"] == "/Volumes/SSD/work/mall/积分商城/jifen-api" for row in rows))
+        front = rows[0]
+        self.assertEqual(front["dockerfile"], "Visionisok.Api/Dockerfile")
+        self.assertEqual(front["acr_id"], "crr-vdgtaw2phsb1n76h")
+        self.assertEqual(front["namespace"], "points-mall")
+        self.assertEqual(front["deployment"], "points-mall-front")
+        self.assertEqual(front["container"], "points-mall-front")
+
+    def test_generated_front_templates_have_manual_build_and_confirmation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            with patch.object(generator, "OUTPUT", output):
+                generator.main()
+            build = yaml.safe_load((output / "pipeline-points-mall-front.yaml").read_text())
+            confirm = yaml.safe_load((output / "pipeline-points-mall-front-confirm.yaml").read_text())
+        self.assertEqual(build["sources"]["source_repo"]["branch"], "release")
+        self.assertEqual(build["sources"]["source_repo"]["triggerEvents"], [])
+        self.assertEqual(build["stages"]["build_stage"]["jobs"]["build_job"]["steps"]["acr_push"]["with"]["dockerfilePath"], "Visionisok.Api/Dockerfile")
+        self.assertEqual(confirm["stages"]["confirm_stage"]["jobs"]["confirm_job"]["component"], "ManualValidate")
+
 
 class BuildEvidenceTests(unittest.TestCase):
     def setUp(self):

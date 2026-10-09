@@ -45,11 +45,48 @@ def env(**values):
 
 
 def entry(sid, name, kind, command, status=None):
-    target = {"shell": "bash", "commands": {"run": [f"cd {ROOT}", command]}}
+    command_lines = list(command) if isinstance(command, (list, tuple)) else [command]
+    target = {"shell": "bash", "commands": {"run": [f"cd {ROOT}", *command_lines]}}
     if status:
-        target["status_commands"] = [f"cd {ROOT}", status]
+        status_lines = list(status) if isinstance(status, (list, tuple)) else [status]
+        target["status_commands"] = [f"cd {ROOT}", *status_lines]
     return {"id": sid, "name": name, "type": kind,
             "targets": {"prod": target}}
+
+
+def flow_entries(row, pipeline_ids):
+    """为一个 ACS 角色生成精简后的发布、上线和状态入口。"""
+    sid, branch = row["id"], row["branch"]
+    build_id, confirm_id = pipeline_ids["build"], pipeline_ids["confirm"]
+    image_repo = ("ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/"
+                  f"ruishi-{'java' if row['kind'] == 'java' else 'dotnet'}-prod/{sid}")
+    flow_status = env(FLOW_PIPELINE_ID=build_id, FLOW_SERVICE=sid) + " bash scripts/flow-release.sh status"
+    confirm_status = env(FLOW_PIPELINE_ID=confirm_id, FLOW_SERVICE=sid) + " bash scripts/flow-release.sh status"
+    resources = ("python3 scripts/acs-resource-usage.py " +
+                 f"--namespace {shlex.quote(row['namespace'])} " +
+                 f"--deployment {shlex.quote(row['deployment'])}")
+    status = [flow_status, confirm_status, resources]
+    push = env(FLOW_PIPELINE_ID=build_id, FLOW_SERVICE=sid, FLOW_REPO_DIR=row["repo_dir"],
+               FLOW_RELEASE_BRANCH=branch) + " bash scripts/flow-release.sh push"
+    build_values = dict(FLOW_PIPELINE_ID=build_id, FLOW_DEPLOY_PIPELINE_ID=confirm_id,
+                        FLOW_RELEASE_BRANCH=branch, FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn",
+                        FLOW_ACR_REPO_ID=row["acr_id"], FLOW_IMAGE_REPO=image_repo,
+                        FLOW_SERVICE=sid, FLOW_DEPLOY_MODE="local")
+    if row["kind"] == "java":
+        # Java 多模块首次构建的依赖解析可能接近默认的一小时本地等待上限。
+        build_values["FLOW_BUILD_TIMEOUT"] = 7200
+    build = env(**build_values) + " bash scripts/flow-release.sh build"
+    deploy = env(FLOW_DEPLOY_PIPELINE_ID=confirm_id, FLOW_SERVICE=sid, FLOW_DEPLOY_MODE="local",
+                 FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn", FLOW_ACR_REPO_ID=row["acr_id"],
+                 FLOW_IMAGE_REPO=image_repo, FLOW_NAMESPACE=row["namespace"],
+                 FLOW_DEPLOYMENT=row["deployment"], FLOW_CONTAINER=row["container"],
+                 FLOW_EXPECTED_REPLICAS=row["replicas"], FLOW_CONFIRM="yes") + " bash scripts/flow-release.sh deploy"
+    prefix = f"flow-{sid}"
+    return [
+        entry(f"{prefix}-prepare", f"{row['name']} 准备发布（推送并构建）", row["kind"], [push, build], status),
+        entry(f"{prefix}-deploy", f"{row['name']} 确认上线", row["kind"], deploy, status),
+        entry(f"{prefix}-status", f"{row['name']} 发布与运行状态", row["kind"], status, status),
+    ]
 
 
 def main():
@@ -83,44 +120,10 @@ def main():
                 if not old["targets"]:
                     continue
             retained.append(old)
-        flow_entries = []
+        generated_entries = []
         for row in rows:
-            sid, branch = row["id"], row["branch"]
-            build_id, confirm_id = ids[sid]["build"], ids[sid]["confirm"]
-            image_repo = ("ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/"
-                          f"ruishi-{'java' if row['kind'] == 'java' else 'dotnet'}-prod/{sid}")
-            status = env(FLOW_PIPELINE_ID=build_id, FLOW_SERVICE=sid) + " bash scripts/flow-release.sh status"
-            push = env(FLOW_PIPELINE_ID=build_id, FLOW_SERVICE=sid, FLOW_REPO_DIR=row["repo_dir"],
-                       FLOW_RELEASE_BRANCH=branch) + " bash scripts/flow-release.sh push"
-            build_values = dict(FLOW_PIPELINE_ID=build_id, FLOW_DEPLOY_PIPELINE_ID=confirm_id,
-                                FLOW_RELEASE_BRANCH=branch, FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn",
-                                FLOW_ACR_REPO_ID=row["acr_id"], FLOW_IMAGE_REPO=image_repo,
-                                FLOW_SERVICE=sid, FLOW_DEPLOY_MODE="local")
-            if row["kind"] == "java":
-                # Java 多模块首次构建的依赖解析可能接近默认的一小时本地等待上限。
-                build_values["FLOW_BUILD_TIMEOUT"] = 7200
-            build = env(**build_values) + " bash scripts/flow-release.sh build"
-            deploy = env(FLOW_DEPLOY_PIPELINE_ID=confirm_id, FLOW_SERVICE=sid, FLOW_DEPLOY_MODE="local",
-                         FLOW_ACR_INSTANCE_ID="cri-73ffxebpi6ruw6sn", FLOW_ACR_REPO_ID=row["acr_id"],
-                         FLOW_IMAGE_REPO=image_repo, FLOW_NAMESPACE=row["namespace"],
-                         FLOW_DEPLOYMENT=row["deployment"], FLOW_CONTAINER=row["container"],
-                         FLOW_EXPECTED_REPLICAS=row["replicas"], FLOW_CONFIRM="yes") + " bash scripts/flow-release.sh deploy"
-            logs = ("python3 scripts/etbst-logs.py " +
-                    " ".join(f"--{key.replace('_', '-')} {shlex.quote(row[key])}"
-                             for key in ("namespace", "deployment", "container")))
-            resources = ("python3 scripts/acs-resource-usage.py " +
-                         f"--namespace {shlex.quote(row['namespace'])} " +
-                         f"--deployment {shlex.quote(row['deployment'])}")
-            prefix = f"flow-{sid}"
-            flow_entries.extend((
-                entry(f"{prefix}-push", f"{row['name']} Flow 推送 {branch}", row["kind"], push, status),
-                entry(f"{prefix}-build", f"{row['name']} Flow 构建", row["kind"], build, status),
-                entry(f"{prefix}-deploy", f"{row['name']} Flow 上线", row["kind"], deploy,
-                      env(FLOW_PIPELINE_ID=confirm_id, FLOW_SERVICE=sid) + " bash scripts/flow-release.sh status"),
-                entry(f"{prefix}-resources", f"{row['name']} ACS 资源占用", row["kind"], resources),
-                entry(f"{prefix}-logs", f"{row['name']} ACS 查看日志", row["kind"], logs),
-            ))
-        project["services"] = flow_entries + retained
+            generated_entries.extend(flow_entries(row, ids[row["id"]]))
+        project["services"] = generated_entries + retained
 
     etbst = lookup["etbst"]
     etbst["services"] = [item for item in etbst["services"] if item["id"] != "api-acs-resources"]

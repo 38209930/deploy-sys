@@ -1,0 +1,34 @@
+# pipeline-name: points-mall-front-手动构建
+# 仅手动触发；push 不自动构建。
+sources:
+  source_repo:
+    type: codeup
+    name: points-mall-front
+    endpoint: https://codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/jifen-mall/jifen-api.git
+    branch: release
+    triggerEvents: []
+    certificate:
+      type: serviceConnection
+      serviceConnection: xdghn746erjk8hdo
+
+stages:
+  build_stage:
+    name: 构建并推送镜像
+    jobs:
+      build_job:
+        name: points-mall-front-镜像
+        runsOn: public/cn-beijing
+        steps:
+          acr_push:
+            name: 构建镜像并推送ACR企业版
+            step: ACREEDockerBuild
+            with:
+              serviceConnection: lhjkwns3zhj879ic
+              region: cn-beijing
+              artifact: points_mall_front_image
+              instance: ruishi-prod
+              namespace: ruishi-dotnet-prod
+              dockerRegistry: points-mall-front
+              dockerTag: "${DATETIME}-${CI_COMMIT_ID}"
+              contextPath: .
+              dockerfilePath: Visionisok.Api/Dockerfile

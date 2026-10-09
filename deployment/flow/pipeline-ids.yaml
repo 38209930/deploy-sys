@@ -36,6 +36,9 @@ pipelines:
   points-mall-worker:
     build: 5300572
     confirm: 5300573
+  points-mall-front:
+    build: 5312498
+    confirm: 5312499
   service-order-front:
     build: 5300574
     confirm: 5300575

@@ -201,13 +201,13 @@ deploySys 本机私有配置中保留两个独立入口：`M1X -> m1x-api-new ->
 
 生产 api/worker 服务已迁入北京 ACS（镜像在 ACR `ruishi-java-prod` / `ruishi-dotnet-prod`），上述 `scripts/deploy-*-systemd.sh` 的 SSH+systemd 流程仅保留用于开发测试。生产发布改为本地触发云效 Flow 流水线：Codeup `release` 分支 → 构建镜像 push ACR → 人工确认卡点 → 固定 digest 更新 ACS Deployment。**流水线手动触发，push 不自动构建。**
 
-命令入口 `scripts/flow-release.sh`（子命令 `push | build | deploy | status | apply`），通过阿里云 CLI 调用云效 OpenAPI，显式 `--profile ruishi-prod-acr --region cn-beijing` 并核验账号；deploySys 菜单中对应条目如 `ETBST API Flow 构建`。试点 etbst-api，跑通后按模板复制到其余项目。认证失效执行 `aliyun configure --profile ruishi-prod-acr`。
+命令入口 `scripts/flow-release.sh`（子命令 `push | build | deploy | status | apply`），通过阿里云 CLI 调用云效 OpenAPI，显式 `--profile ruishi-prod-acr --region cn-beijing` 并核验账号。ACS 服务在 deploySys 中统一只有三个入口：`准备发布（推送并构建）`、`确认上线`、`发布与运行状态`；最后一项同时读取两条 Flow 流水线和 ACS Deployment/Pod 运行态。认证失效执行 `aliyun configure --profile ruishi-prod-acr`。
 
 详细说明、现网核实结论与待办的控制台授权清单见 [deployment/flow-release-commands.md](deployment/flow-release-commands.md)；流水线 YAML 模板见 [deployment/flow/pipeline-etbst-api.yaml](deployment/flow/pipeline-etbst-api.yaml)。
 
 ## ACS 当前资源占用查询
 
-每个 ACS 服务菜单提供“ACS 资源占用”，显示容器 CPU/内存近期用量、requests/limits、Pod IP、Ready、重启及上次退出原因。命令也可独立执行：
+每个 ACS 服务的“发布与运行状态”会包含容器 CPU/内存近期用量、requests/limits、Pod IP、Ready、重启及上次退出原因。命令也可独立执行：
 
 ```bash
 python3 scripts/acs-resource-usage.py --namespace points-mall --deployment points-mall-front
