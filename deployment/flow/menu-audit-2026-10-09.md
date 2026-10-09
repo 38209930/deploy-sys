@@ -35,17 +35,31 @@ SMS Core 的前台 API、后台 API 和 Worker 使用 ECS 部署；后台前端�
 
 ## release 分支补齐（2026-10-09）
 
-首次排查发现下列五个源码仓库缺少远端 release，影响八个现有生产入口。主公随后明确要求在对应远端补齐分支；当前结果如下：
+首次排查发现下列五个源码仓库缺少远端 release，影响八个现有生产入口。主公随后明确要求补齐分支、整理命名冲突，并确认将已完成成果合入 release/master。五个仓库现均已完成收口，本地与远端 master、release 一致：
 
-| 源码仓库 | 影响入口 | release 起点／结果 |
+| 源码仓库 | 影响入口 | master / release 最终提交 |
 | --- | --- | --- |
-| SMS Core `sms-api` | 前台 API、后台 API、Worker（ECS） | 从远端 master `c072632a288d` 建立并推送，回读一致 |
-| SMS Core `sms-admin` | 后台前端 | 从远端 master `ce1838867bba` 建立并推送，回读一致 |
-| AI 自习室 `ai-study-store-admin` | 后台 OSS | 从远端 master `39e330927db0` 建立并推送，回读一致 |
-| AI 自习室 `ai-study-store-biz` | 业务 H5 | 将既有本地 release `a721c5a7c334` 推送为远端 release，回读一致 |
-| 浩丰盛账号 `group-account` | Web OSS、API ECS 发布 | 现有 `release/current` 和 `release/v1.0.0`～`v1.4.0` 与根分支名 release 冲突，等待确认将这六条分支改名为 `releases/...` 后，从远端 master 建立 release |
+| SMS Core `sms-api` | 前台 API、后台 API、Worker（ECS） | `38be34aa16b6`，包含已完成的首次发送体验分支 |
+| SMS Core `sms-admin` | 后台前端 | `b4d598b64aec`，包含已完成的首次发送管理体验分支 |
+| AI 自习室 `ai-study-store-admin` | 后台 OSS | `39e330927db0`，原 master 已包含全部分支成果 |
+| AI 自习室 `ai-study-store-biz` | 业务 H5 | `d1724708d117`，保留原 master 与 release 两边历史并解决路由冲突 |
+| 浩丰盛账号 `group-account` | Web OSS、API ECS 发布 | `fc26fcac9266`，历史分支改名后，从已包含全部成果的 master 建立 release |
 
-四个已补齐仓库的本地／远端 release 为 0/0，开发工作区与未提交改动保持原状。SMS Core 两个 `feat/first-send-readiness` 开发分支没有自动合入 release。AI 自习室业务 H5 的既有 release 与 master 已分叉（release 独有 2 个提交、master 独有 30 个提交），本次保留该分支起点和历史，没有自动合并；后续发布前应在分支选择中审查源码差异。
+### 历史分支与冲突处理
+
+- Git 分支 `release` 与 `release/...` 无法同时存在。浩丰盛账号的六条 `release/current`、`release/v1.0.0`～`v1.4.0` 整理为 `releases/...`：先复制远端原提交并回读验证，再改本地名称、移除旧远端名称，最后建立独立的 release。六条远端历史分支的提交均未改变。
+- 浩丰盛本地 `releases/v1.3.0` 原先比对应远端多一个提交，保留这个本地差异；该提交已包含在 master/release 中，没有覆盖历史版本的远端指向。
+- SMS Core 的完成状态及验证记录来自 `sms-api/docs/v2/首次成功发送体验改进执行计划.md`。两个合并结果的文件树分别与既有完成分支完全一致；本次没有改动业务源码，也没有重新运行文档所记录的历史测试。
+- AI 自习室 H5 原 release 独有 2 个提交、master 独有 30 个提交。采用保留两边提交的合并，解决 `pages.json` 末尾新增路由冲突：保留 master 的所有路由及旧 release 的“我的员工”路由、页面和个人信息入口；支付文件与原 master 完全一致。旧远端拼写分支 `releas` 保留原提交 `a721c5a7c334`。
+- 三个有合并工作的仓库均保留并推送 `maintenance/release-consolidation-20261009`，其成果全部进入 release/master；原开发分支保留。
+
+### 本次收口验证
+
+- 操作前记录五个仓库的 73 条本地／远端分支引用，共 31 个不同的分支头提交；逐一使用 `git merge-base --is-ancestor` 核验这些原提交及整理后的所有分支头均已进入 master 和 release。
+- 五个仓库 master 与 release 指向一致；通过远端回读和 `git rev-list --left-right --count` 核验各自本地／远端均为 0/0。没有强推或重写共享提交。
+- H5 的 JSON5 路由解析、重复路由检查、页面文件存在性检查、三个相关 Vue 文件的脚本语法检查通过；新增路由的 diff 检查通过。package.json 未配置构建脚本，本次未运行 HBuilderX 构建或浏览器验收，未来发布前应人工验证“我的员工”入口及页面。
+- 原开发工作区分支及未提交改动保持原状，既有部署工作区的 HEAD 未改变；仅清理本次新建的三个临时合并工作区。
+- 本次仅进行 Git 分支整理和文档更新，未执行 Flow 构建、ACS 更新、ECS 发布、OSS 上传或数据库操作。SMS Core 继续沿用 ECS；分支收口不代表这次已经上线。
 
 ## 验证与边界
 
