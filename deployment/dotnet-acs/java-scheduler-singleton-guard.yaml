@@ -1,0 +1,21 @@
+# 仅绑定含进程内定时任务的 Java API；M1X 任务在独立 Worker。
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: ruishi-java-scheduler-singleton
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+        scope: Namespaced
+  validations:
+    - expression: >-
+        (!has(object.spec.replicas) || object.spec.replicas <= 1) &&
+        has(object.spec.strategy) &&
+        has(object.spec.strategy.type) &&
+        object.spec.strategy.type == 'Recreate'
+      message: "进程内定时任务 API 必须保持至多一个副本及 Recreate；禁止滚动更新期间双 Pod。"

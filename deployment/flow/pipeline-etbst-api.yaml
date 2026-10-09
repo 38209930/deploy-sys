@@ -1,0 +1,54 @@
+# pipeline-name: etbst-api-发布
+#
+# 云效 Flow 流水线定义（etbst-api 试点）。
+# 创建/更新：FLOW_PIPELINE_ID=<已有ID> bash scripts/flow-release.sh apply deployment/flow/pipeline-etbst-api.yaml
+#
+# 云效全局设置 > Kubernetes 集群管理已注册 Flow 集群：
+#   Codeup 服务连接 xdghn746erjk8hdo 已对 power-application-user 可见，实际拉取待验证
+#   ACR 服务连接 lhjkwns3zhj879ic 已对 power-application-user 可见，推送能力待验证
+#   ACK 服务连接 fmayt57b9ttcjq61 已对 power-application-user 可见
+#   UIuvaR8vFrIjY4lj 是 Flow 注册后的集群 ID，不能填 ACK 服务连接 ID 或 ACS 集群 ID
+#
+# 公共构建机用临时 Dockerfile.flow 从同一 ACR 实例的公网域名拉取基础镜像。
+# 构建后由本地命令按本次 tag 向 ACR API 查询 digest，再启动独立的人工确认/部署流水线。
+
+sources:
+  etbst_repo:
+    type: codeup
+    name: et-bst-api
+    endpoint: https://codeup.aliyun.com/659a5cefd64a2eb2dceb72f3/ddmp/et-bst-api.git
+    branch: release
+    triggerEvents: []            # 手动触发（本地 flow-release.sh build），不做 push 自动构建
+    certificate:
+      type: serviceConnection
+      serviceConnection: xdghn746erjk8hdo
+
+stages:
+  build_stage:
+    name: 构建并推送镜像
+    jobs:
+      build_job:
+        name: etbst-api-镜像
+        runsOn: public/cn-beijing
+        steps:
+          prepare_public_dockerfile:
+            name: 为公网构建机准备Dockerfile
+            step: Command
+            with:
+              run: |
+                set -eu
+                test "$(grep -c 'ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com' Dockerfile)" -eq 2
+                sed 's#ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com#ruishi-prod-registry.cn-beijing.cr.aliyuncs.com#g' Dockerfile > Dockerfile.flow
+                test "$(grep -c 'ruishi-prod-registry.cn-beijing.cr.aliyuncs.com' Dockerfile.flow)" -eq 2
+          acr_push:
+            name: 构建镜像并推送ACR企业版
+            step: ACREEDockerBuild   # 仓库根 Dockerfile 多阶段构建
+            with:
+              serviceConnection: lhjkwns3zhj879ic
+              region: cn-beijing
+              artifact: etbst_api_image
+              instance: ruishi-prod
+              namespace: ruishi-java-prod
+              dockerRegistry: etbst-api
+              dockerTag: "${DATETIME}-${CI_COMMIT_ID}"   # Tag 不可变，禁止复用
+              dockerfilePath: Dockerfile.flow

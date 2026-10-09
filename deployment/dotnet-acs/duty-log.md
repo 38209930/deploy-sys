@@ -1,0 +1,44 @@
+# 值班日志
+
+每日巡检与运行统计的一句话记录；详细证据见同目录带日期的记录文件。
+
+## 2026-09-27
+
+- 00:30 变更完成：售后 Worker 启动 1/1，Yangu/M1X 迁入新出口（详见 [worker-start-and-java-egress-2026-09-27.md](worker-start-and-java-egress-2026-09-27.md)）。
+- 上午巡检：ALB/NAT 云端指标正常；**当时本机至 ACS 的路由未走 VPN**，kubectl 私网 API 不可达，Pod 级巡检推迟到隧道恢复。
+- 资源采样（17 个运行 Pod）：CPU 全部 < limit 2%；内存最高 ddmp-api 53%（RSS 44%），其余 ≤30%，均低于 80% 预警线；该时点无即时扩容迹象，不代表业务高峰容量结论。脚本 [resource-snapshot.sh](resource-snapshot.sh)。
+- 前次云端统计（起止时间待原始指标核实；原记录的 09-27 10:30 CST 晚于本文 09:07 的复验时点，不能视为已核实的统计终点）：
+  - ALB 443 总请求据前次记录约 29k，其中 09-26 约 28.4k（2XX 94.7%、4XX 3.2%、5XX 2.1%）；09-25 约 45、09-27 约 686。QPS 峰值 1.77，最大并发连接 10.5，前次记录称无 TLS 握手失败、上游连接错误及连接拒绝；以上均待按原始指标复算。5XX 的时间分布及其与发布窗口的关系尚未核实。
+  - NAT 出口（即固定 EIP）：前次记录称峰值 < 0.01 Mbps（上限 10），无会话限制丢弃、无端口分配错误；原始指标待复核。NAT 自 09-26 21:29 CST 创建，之前无此数据。
+  - 结论：**目前没有足以支持扩容决定的证据；也未覆盖业务峰值及任务周期**；继续按周采样观察 ddmp-api 内存趋势。
+- 遗留：Pod 级三日重启计数因 VPN 断开未取（注：云监控无 ECI 指标、当时未核实 metrics-server，三日逐时 CPU/内存历史本身不可回溯，只能从现在起按周采样积累）。
+
+### 2026-09-27 上午（VPN 恢复后补记）
+
+- OpenVPN 已恢复，补做 Pod 级巡检：19 个 Pod 中 17 个业务 Pod 全部 Running、重启 0；dgye 两个历史诊断 Pod 维持原状（ErrImagePull/Completed，非运行负载）。
+- 经管理员同意安装集群组件 `managed-metrics-server` v0.3.9.5（安装任务 `T-6ab8681c441e6701030032b3`，RequestId `01A0E056-ADF9-51CD-98A8-02668115CCDC`，08:50 完成）；`kubectl top pods -A` 验证可用，读数与 cgroup 采样吻合（ddmp 483Mi、yangu 486Mi）。该组件为托管形态，集群内不落业务 Pod。
+- 云监控 ECI 指标评估结论：**不启用**——该账号 CMS 无 ECI 命名空间指标，开启需逐实例注入，且 metrics-server 已覆盖需求，属重复建设。
+- 按管理员要求，`yangu-api` 与 `ddmp-api` 同列为内存趋势重点观察对象（2Gi 档，当前 24%，RSS 20%）。
+
+### 2026-09-27 09:07 CST 交接复验
+
+- 账号 `1442361567788059`、ACS `cebc88343a44b4d759aa983a47b787835`：STS 与 VPN 路由 `utun6` 读回；临时 kubeconfig 仅用于只读 Kubernetes API，已清理。
+- `resource-snapshot.sh` 修复后对 17 个运行容器各采两次、间隔 1 秒：CPU/limit 约 0.1%–1.7%；DDMP memory.current 550.2 MiB/1 GiB、v1 RSS 458.3 MiB；Yangu memory.current 559.6 MiB/2 GiB、RSS 464.6 MiB。`kubectl top` 同时读得售后 Worker 1m/160Mi，而脚本为约 157.9 MiB、0.3% CPU limit。两者采样时点、工作集与 cgroup usage 口径不同，不能要求数值完全相等。1 秒 CPU 窗口仅供脚本核验，不覆盖峰值。
+- 售后 Worker 近 6 小时日志末 150 行只出现四类 `Task4*`，不能据此确定注册总数；未取得注册清单、脱敏业务事件及外部结果，退款、短信、ERP 均待验收。
+- 三日 ALB 5XX 分时原始序列、NAT 同窗口原始数据、短信生效配置及 AI Front 用户影响本轮尚未取得；旧网段五项目的真实公网依赖仍待逐项取证。详见[验收整改记录](acceptance-remediation-2026-09-27.md)。
+
+### 2026-09-27 09:15 CST 验收补证
+
+- ALB `alb-olyb9enxszy3f42nnn` 的 09-26 00:00–09-27 00:00 CST、`https:443` CMS 60 秒序列独立复算：约 30322 请求、683 个 5XX，约 2.25%；11 时段 5XX 约 217（主要 500），15 时段约 190（主要 503）。原“2.1%”口径未复现，发布事件归因待时间戳和访问日志。详见[验收整改记录](acceptance-remediation-2026-09-27.md)。
+- 售后 Worker 源码注册 5 个 Job/5 个 Trigger，日志仅见 4 类；最近 09:15 短信补偿处理 0 条，工单及发货扫描任务层成功。镜像构建 SHA 与源码尚未对齐，业务结果未验收。
+- AI Front 规划域名 `rsst-front-api.svision100.com` 公共 DNS 为 NXDOMAIN，旧 ECS `Stopped`；实际用户影响待访问/回调记录。五个旧网段项目 Pod IP 已只读复核，真实公网依赖仍待取证。
+- 上午（委托任务执行）：完成 A/B/C/D 四项只读取证（报告见 [ops-delegation-execution-2026-09-27.md](ops-delegation-execution-2026-09-27.md)）。**重要发现：SmsCore 白名单未含新网段（172.31.240.0/24、172.28.64.0/24），10:18 真实售后短信被 401 auth.ip_not_allowed 拒绝，2 条重试进入终态未送达**——所有新网段项目的短信发送确定性失败，待管理员授权修复；同时该错误证明售后的旧短信直连通道未启用。ALB 09-26 三个 5XX 峰值窗口全部与变更时间线对齐（11 时 500 与 Pod 重建窗口相关、15:53 与 19–23 时 503 与发布/规则增删窗口相关），因访问日志未启用 Host 级归因不可追溯。告警规则现为 0 条、接收通道 PENDING 未验证，C 项迁移按任务书暂缓。
+
+### 2026-09-27 11:26 CST SmsCore 白名单补记
+
+- 管理员单独授权后，仅在 SmsCore 生产库全局白名单新增并启用 `172.31.240.0/24`、`172.28.64.0/24`。写前规则 19 条，写后 21 条，旧规则逐字段不变；受控快照留在 SmsCore ECS，权限 600。PublicApi readiness 为 200。变更记录与业务证据边界见[委托任务执行报告的补记](ops-delegation-execution-2026-09-27.md#授权变更补记smscore-新网段白名单2026-09-27-1126-cst)。
+- 已知的 IP 白名单阻断解除，但真实业务短信发送、供应商受理及旧终态通知处理仍待核验；未主动补发短信。售后 Worker 的 24 小时观察和第五个 Job 仍待次日到期回填。
+- 告警草案中的 NAT 7 Mbps 换算已从错误的 8,750,000 改为 7,000,000 bps；ALB 5XX 为 Count/s，5 分钟聚合阈值须验证后才可创建规则。当前告警仍为零条。
+- 11:36 继续核对：ALB `DualStack_ListenerHTTPCode5XX` 云监控元数据为 `is_alarm=false`，可告警的 `ListenerHTTPCode5XX` 为 `is_alarm=true`。09-26 15:53 的 60 秒值 2.17 count/s 与约 130 次错误吻合，但 300 秒数据为 0；规则草案改用 `Period=60/Statistics=Value`，NAT 指标亦为 `Value`。联系人 Mail/SMS 仍 `PENDING`，未写入规则。
+- 新零售 Front、Back、Worker 与当前运行的 Java 项目 Pod 来源均落在 SmsCore 已启用的旧 `/20` 或新增 `/24` 全局白名单内；DGYE、VET 无运行中业务 Pod。未重复添加旧网段规则。来源覆盖不等于短信通道及真实投递验收通过；11:26 后尚无新短信事件可核。
+- 09-26 ALB 60 秒历史序列回放验证了候选 5XX 告警阈值能命中已知峰点；300 秒序列在同窗口为零，不用于该规则。新零售公网支付依赖与短信私网白名单分开处理，旧网段出口迁移仍受发布门槛约束。

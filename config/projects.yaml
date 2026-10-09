@@ -1,1 +1,22 @@
+# 公开配置模板。真实服务清单在本机私有文件 config/projects.local.yaml（不入库）。
+#
+# 云效 Flow 发布命令块示例（详见 deployment/flow-release-commands.md）：
+# projects:
+# - id: etbst
+#   name: ETBST
+#   type: java
+#   services:
+#   - id: api-flow-build
+#     name: ETBST API Flow 构建
+#     type: java
+#     targets:
+#       prod:
+#         shell: bash
+#         commands:
+#           run:
+#           - cd /path/to/deploy-sys
+#           - FLOW_PIPELINE_ID=12345 FLOW_SERVICE=etbst-api bash scripts/flow-release.sh build
+#         status_commands:
+#         - cd /path/to/deploy-sys
+#         - FLOW_PIPELINE_ID=12345 FLOW_SERVICE=etbst-api bash scripts/flow-release.sh status
 projects: []

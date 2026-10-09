@@ -1,0 +1,37 @@
+# pipeline-name: service-order-front-固定digest人工确认
+# Flow 的 kubectl 1.27.9 不适配 ACS 1.36.1；确认后由本机 kubectl 执行镜像更新。
+variables:
+  - key: IMAGE_DIGEST_REF
+    value: ""
+  - key: SOURCE_COMMIT
+    value: ""
+
+stages:
+  preflight_stage:
+    name: 校验发布输入
+    jobs:
+      preflight_job:
+        name: 校验镜像digest
+        runsOn: public/cn-beijing
+        steps:
+          verify_digest:
+            name: 校验目标镜像与源码提交
+            step: Command
+            with:
+              run: |
+                set -eu
+                printf '%s' "$IMAGE_DIGEST_REF" | grep -Eq '^ruishi-prod-registry-vpc[.]cn-beijing[.]cr[.]aliyuncs[.]com/ruishi-dotnet-prod/service-order-front@sha256:[0-9a-f]{64}$'
+                printf '%s' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$'
+                printf 'source_commit=%s\nimage_digest_ref=%s\n' "$SOURCE_COMMIT" "$IMAGE_DIGEST_REF"
+
+  confirm_stage:
+    name: 人工确认
+    jobs:
+      confirm_job:
+        name: 上线前确认
+        component: ManualValidate
+        with:
+          validatorType: users
+          validateMethod: and
+          validators:
+            - 203420990220401362
