@@ -57,7 +57,7 @@ def entry(sid, name, kind, command, status=None):
 
 
 def flow_entries(row, pipeline_ids):
-    """每个 ACS 服务只有发布入口，状态查询放在同一目标。"""
+    """每个 ACS 服务共用一个目标，分别提供发布、重新部署和状态查询。"""
     sid, branch = row["id"], row["branch"]
     build_id, confirm_id = pipeline_ids["build"], pipeline_ids["confirm"]
     image_repo = ("ruishi-prod-registry-vpc.cn-beijing.cr.aliyuncs.com/"
@@ -82,7 +82,16 @@ def flow_entries(row, pipeline_ids):
     prefix = f"flow-{sid}"
     item = entry(f"{prefix}-release", f"{row['name']} 发布", row["kind"], command, status)
     item['targets']['prod'].update(release_repos=[row['repo_dir']], release_required=True)
+    if row['replicas'] > 0:
+        item['targets']['prod']['commands']['restart'] = restart_commands(row)
     return [item]
+
+
+def restart_commands(row):
+    return [f"cd {shlex.quote(str(ROOT))}", "python3 scripts/acs-image-deploy.py --restart " +
+            " ".join(f"--{key.replace('_', '-')} {shlex.quote(str(value))}" for key, value in
+                     dict(namespace=row['namespace'], deployment=row['deployment'],
+                          container=row['container'], expected_replicas=row['replicas']).items())]
 
 
 def update_menu(data, services, ids):

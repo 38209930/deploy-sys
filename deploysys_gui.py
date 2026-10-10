@@ -87,7 +87,7 @@ class ExecutionManager:
                     service,
                     target_name,
                     target,
-                    "状态检查" if action == "status" else "执行",
+                    "状态检查" if action == "status" else ("restart" if action == "restart" else "执行"),
                     commands,
                     settings,
                     emit,
@@ -361,7 +361,7 @@ def update_target(data: dict[str, Any]) -> dict[str, Any]:
 def save_commands(data: dict[str, Any]) -> dict[str, Any]:
     project_id, service_id, target_name = required(data, "project_id"), required(data, "service_id"), required(data, "target_name")
     mode = str(data.get("mode") or "run")
-    if mode not in {"run", "status"}:
+    if mode not in {"run", "status", "restart"}:
         raise ConfigError("命令类型不支持。")
     commands = command_lines(data)
     shell = str(data.get("shell") or "auto").lower()
@@ -373,7 +373,7 @@ def save_commands(data: dict[str, Any]) -> dict[str, Any]:
         if mode == "status":
             target["status_commands"] = commands
         else:
-            target.setdefault("commands", {})[deploysys.COMMAND_KEY] = commands
+            target.setdefault("commands", {})[mode] = commands
         target["shell"] = shell
 
     return mutation(data, update)
@@ -408,10 +408,13 @@ def start_execution(data: dict[str, Any], status: bool = False) -> dict[str, Any
     service = find_service(project, required(data, "service_id"))
     target_name = required(data, "target_name")
     target = find_target(service, target_name)
-    commands = target.get("status_commands") if status else (target.get("commands") or {}).get(deploysys.COMMAND_KEY)
+    action = "status" if status else str(data.get("action") or "run")
+    if action not in {"run", "restart", "status"} or (not status and action == "status"):
+        raise ConfigError("操作类型不支持。")
+    commands = target.get("status_commands") if status else (target.get("commands") or {}).get(action)
     if not isinstance(commands, list) or not commands:
         raise ConfigError("当前执行目标没有可执行命令。")
-    plan = None if status else deploysys.release.plan_release(target_name, commands, "执行", deploysys.ROOT, deploysys.DATA_DIR, project, target)
+    plan = None if status else deploysys.release.plan_release(target_name, commands, "restart" if action == "restart" else "执行", deploysys.ROOT, deploysys.DATA_DIR, project, target)
     selection = None
     if plan is not None:
         command_hash = hashlib.sha256(json.dumps(commands, ensure_ascii=False).encode()).hexdigest()
@@ -422,7 +425,7 @@ def start_execution(data: dict[str, Any], status: bool = False) -> dict[str, Any
         selection = data.get("release_selection")
         if not isinstance(selection, list):
             raise ConfigError("缺少分支选择，请重新执行。")
-    execution = EXECUTIONS.start(project, service, target_name, target, "status" if status else "run", commands, plan, selection)
+    execution = EXECUTIONS.start(project, service, target_name, target, action, commands, plan, selection)
     return {"ok": True, "execution": EXECUTIONS._summary(execution)}
 
 

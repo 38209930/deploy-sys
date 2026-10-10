@@ -54,7 +54,8 @@ function services() { return currentProject()?.services || []; }
 function currentService() { return services().find(service => service.id === selected.service) || null; }
 function targets() { return currentService()?.targets || {}; }
 function currentTarget() { return targets()[selected.target] || null; }
-function currentLines() { return mode === "status" ? (currentTarget()?.status_commands || []) : (currentTarget()?.commands?.run || []); }
+function currentLines() { return mode === "status" ? (currentTarget()?.status_commands || []) : (currentTarget()?.commands?.[mode] || []); }
+function restartLabel() { return selected.service?.startsWith("flow-") ? "重新部署" : "重启服务"; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
 
 function normalizeSelection() {
@@ -109,8 +110,11 @@ function render() {
     button.addEventListener("click", () => safeChange(() => { selected.target = targetName; }));
     targetBox.appendChild(button);
   });
-  document.querySelectorAll(".tab").forEach(tab => tab.classList.toggle("active", tab.dataset.mode === mode));
-  $("commandLabel").textContent = mode === "status" ? "状态检查命令，可直接粘贴多行" : "执行命令，可直接粘贴多行";
+  document.querySelectorAll(".tab").forEach(tab => {
+    tab.classList.toggle("active", tab.dataset.mode === mode);
+    if (tab.dataset.mode === "restart") tab.textContent = restartLabel();
+  });
+  $("commandLabel").textContent = `${mode === "status" ? "状态检查" : mode === "restart" ? restartLabel() : "执行"}命令，可直接粘贴多行`;
   if (!dirty) $("commands").value = currentLines().join("\n");
   $("shellMode").value = currentTarget()?.shell || "auto";
   $("dirty").hidden = !dirty;
@@ -148,7 +152,7 @@ function updateControls() {
   $("deleteTargetBtn").disabled = !hasTarget;
   $("saveCommandsBtn").disabled = !hasTarget || running;
   $("executeBtn").disabled = !hasTarget || dirty || running || !currentLines().length;
-  $("executeBtn").textContent = mode === "status" ? "执行检查" : "执行";
+  $("executeBtn").textContent = mode === "status" ? "执行检查" : mode === "restart" ? restartLabel() : "执行";
   $("cancelBtn").hidden = !running;
 }
 
@@ -273,7 +277,8 @@ function selectReleaseBranches(plan) {
 
 async function execute() {
   const endpoint = mode === "status" ? "/api/status-executions" : "/api/executions";
-  const request = { project_id: selected.project, service_id: selected.service, target_name: selected.target };
+  const request = { project_id: selected.project, service_id: selected.service, target_name: selected.target, action: mode };
+  if (mode === "restart" && !confirm(`确认${restartLabel()}“${currentProject()?.name} / ${currentService()?.name} / ${selected.target}”？将使用服务器当前版本，执行期间服务可能短暂不可用。`)) return;
   const data = await guarded($("executeBtn"), async () => {
     let response = await api(endpoint, { method: "POST", body: JSON.stringify(request) });
     if (response.release_plan) {

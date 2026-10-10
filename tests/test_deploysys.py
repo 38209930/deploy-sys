@@ -380,6 +380,43 @@ class ApiTests(IsolatedWorkspace):
         self.assertEqual(status, 400)
         self.assertIn("至少需要", payload["error"])
 
+    def test_restart_saves_separately_and_skips_release_preparation(self):
+        _, project = self.request('/api/projects', {'revision': 0, 'id': 'demo', 'name': 'Demo'})
+        _, service = self.request('/api/services', {'revision': project['state']['revision'],
+            'project_id': 'demo', 'id': 'api', 'name': 'API', 'target_name': 'prod', 'commands': ['echo deploy']})
+        identity = dict(project_id='demo', service_id='api', target_name='prod')
+        restart = [self.print_command('restart-only')]
+        status, saved = self.request('/api/commands', dict(identity, revision=service['state']['revision'],
+                                                         mode='restart', commands=restart))
+        self.assertEqual(status, 200, saved)
+        target = deploysys.load_project_snapshot().data['projects'][0]['services'][0]['targets']['prod']
+        self.assertEqual(target['commands']['run'], ['echo deploy'])
+        self.assertEqual(target['commands']['restart'], restart)
+        with patch.object(deploysys.release, 'plan_release', wraps=deploysys.release.plan_release) as planner, \
+             patch.object(deploysys, 'run_action_commands', return_value=([], Path('restart.log'))) as runner:
+            status, response = self.request('/api/executions', dict(identity, action='restart'))
+            self.assertEqual(status, 200, response)
+            self.assertNotIn('release_plan', response)
+            self.assertEqual(response['execution']['action'], 'restart')
+            for _ in range(50):
+                if deploysys_gui.EXECUTIONS.read(response['execution']['id'], 0)['done']:
+                    break
+                time.sleep(.01)
+            self.assertEqual(planner.call_args.args[2], 'restart')
+            self.assertEqual(runner.call_args.args[4:6], ('restart', restart))
+        status, _ = self.request('/api/executions', dict(identity, action='stop'))
+        self.assertEqual(status, 400)
+
+    def test_restart_without_commands_does_not_fall_back_to_deploy(self):
+        _, project = self.request('/api/projects', {'revision': 0, 'id': 'demo', 'name': 'Demo'})
+        self.request('/api/services', {'revision': project['state']['revision'], 'project_id': 'demo',
+            'id': 'api', 'name': 'API', 'target_name': 'test', 'commands': ['echo deploy']})
+        with patch.object(deploysys_gui.EXECUTIONS, 'start') as start:
+            status, _ = self.request('/api/executions', dict(project_id='demo', service_id='api',
+                                                           target_name='test', action='restart'))
+        self.assertEqual(status, 400)
+        start.assert_not_called()
+
 
 class CompatibilityTests(unittest.TestCase):
     def test_encryption_round_trip_and_masking(self):

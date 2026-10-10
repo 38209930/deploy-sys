@@ -25,7 +25,7 @@
     <section class="workspace">
       <div class="target-toolbar"><h2>执行目标</h2><div class="toolbar"><button id="addTargetBtn">新增执行目标</button><button id="editTargetBtn">编辑目标</button><button class="danger" id="deleteTargetBtn">删除目标</button></div></div>
       <div id="targets" class="target-list"></div>
-      <div class="tabs"><button data-mode="run" class="tab active">执行命令</button><button data-mode="status" class="tab">状态检查命令</button></div>
+      <div class="tabs"><button data-mode="run" class="tab active">执行命令</button><button data-mode="restart" class="tab">重启服务</button><button data-mode="status" class="tab">状态检查命令</button></div>
       <div class="editor-head"><label id="commandLabel" for="commands">执行命令，可直接粘贴多行</label><span id="dirty" hidden>未保存</span></div>
       <textarea id="commands" spellcheck="false" placeholder="粘贴完整部署命令块，例如：&#10;cd /path/to/project&#10;bash scripts/deploy.sh"></textarea>
       <details><summary>高级设置</summary><label for="shellMode">Shell</label><input id="shellMode" value="auto" placeholder="auto / zsh / bash / powershell / cmd"></details>

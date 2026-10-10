@@ -16,6 +16,9 @@
 #           run:
 #           - cd /path/to/deploy-sys
 #           - FLOW_PIPELINE_ID=12345 FLOW_SERVICE=etbst-api bash scripts/flow-release.sh build
+#           restart:
+#           - cd /path/to/deploy-sys
+#           - python3 scripts/acs-image-deploy.py --restart --namespace etbst-api --deployment etbst-api --container etbst-api --expected-replicas 1
 #         status_commands:
 #         - cd /path/to/deploy-sys
 #         - FLOW_PIPELINE_ID=12345 FLOW_SERVICE=etbst-api bash scripts/flow-release.sh status
