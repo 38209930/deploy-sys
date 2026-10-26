@@ -11,6 +11,14 @@ sys.path.insert(0, str(SOURCE))
 from deploysys_store import ConfigStore, ConfigError
 
 WORKSPACE = Path('/Volumes/SSD/work/mall/积分商城')
+OLD_SCRIPT_ROOTS = ('/Volumes/SSD/work/deploy-sys-points-mall-delivery', '/Volumes/SSD/work/deploy-sys-points-mall')
+
+
+def repair_wrapper_path(line, script_root):
+    for old in OLD_SCRIPT_ROOTS:
+        line = line.replace(old + '/scripts/points-mall-deploy.py',
+                            str(script_root / 'scripts/points-mall-deploy.py'))
+    return line
 
 
 def update_menu(data, tool_root, script_root):
@@ -25,6 +33,7 @@ def update_menu(data, tool_root, script_root):
             action = sid.rsplit('-', 1)[-1]
             target = service['targets']['prod']
             lines = target['commands']['run']
+            lines[:] = [repair_wrapper_path(line, script_root) for line in lines]
             # 旧菜单曾把已删除的 jifen-api-release 工作树写死在环境变量中。
             # points-mall-deploy.py 会选择实际 release 工作树，菜单不应再携带该误导性路径。
             lines[:] = [re.sub(r"(?:^|\s)FLOW_REPO_DIR=(?:'[^']*'|\"[^\"]*\"|[^\s]+)", '', line) for line in lines]
@@ -54,6 +63,7 @@ def update_menu(data, tool_root, script_root):
                 if environment not in ('test', 'prod'):
                     continue
                 lines = target['commands']['run']
+                lines[:] = [repair_wrapper_path(line, script_root) for line in lines]
                 if any('points-mall-deploy.py' in line for line in lines):
                     continue
                 # 保留部署命令原文及私有路径。后台 OSS 构建脚本在 API 仓运行，
