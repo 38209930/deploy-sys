@@ -124,6 +124,23 @@ class BranchTests(unittest.TestCase):
             DEPLOY.finish_master(work, head)
 
 class MenuTests(unittest.TestCase):
+    def test_existing_miniapp_wrapper_repairs_deleted_tool_path(self):
+        for old in MENU.OLD_SCRIPT_ROOTS:
+            with self.subTest(old=old):
+                original = (f"python3 {old}/scripts/points-mall-deploy.py test '/repo with spaces'"
+                            ' deploy -- bash -eu -c \'cd "$POINTS_MALL_SOURCE_DIR"\n'
+                            "bash scripts/upload-wechat.sh test'")
+                target = {'commands': {'run': [original]}, 'status_commands': ['keep status']}
+                data = {'projects': [{'id': 'jifen', 'services': [
+                    {'id': 'miniapp', 'targets': {'test': target}},
+                ]}]}
+                MENU.update_menu(data, ROOT, ROOT)
+                self.assertEqual(target['commands']['run'], [original.replace(old, str(ROOT))])
+                self.assertEqual(target['status_commands'], ['keep status'])
+                snapshot = copy.deepcopy(data)
+                MENU.update_menu(data, ROOT, ROOT)
+                self.assertEqual(data, snapshot)
+
     def test_scoped_idempotent_updates_and_selected_cwd(self):
         other = {'id': 'other', 'services': [{'id': 'keep', 'targets': {}}]}
         project = {'id': 'jifen', 'services': [
