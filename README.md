@@ -174,6 +174,8 @@ python3 -m py_compile deploysys.py deploysys_gui.py tests/test_deploysys.py
 
 ## M1X API / Worker 分离版发布
 
+M1X 的测试环境已单独接入，入口、版本限制和 OSS 测试目标见 [M1X 测试部署](deployment/m1x-test-deployment.md)。测试环境只有一个 API；生产 API/Worker 入口保持原样。
+
 `scripts/deploy-m1x-api-systemd.sh` 用于发布 API/Worker 分离后的 M1X API。脚本只操作 `m1x-api.service`，不会启动、停止或重启 Worker；Worker 状态只作为验收信息输出。
 
 生产菜单在执行源码推送、构建或部署前，会自动准备 `release`。终端菜单用逗号分隔编号多选分支，网页菜单用复选框选择；可以不选分支继续，也可以取消部署。候选分支按“存在 release 尚未包含的提交”判断，不依据提交日期；相同提交的本地和远端分支合并展示，已分叉的分支会标明。继续后同步并推送 release，只合入用户明确选择的分支。
