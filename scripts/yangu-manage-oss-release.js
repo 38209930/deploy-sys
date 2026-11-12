@@ -12,7 +12,11 @@ const root = path.resolve(__dirname, '..')
 const action = process.argv[2] || 'status'
 const sha = b => crypto.createHash('sha256').update(b).digest('hex')
 const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
-const publicIndex = () => execFileSync('curl', ['--fail', '--silent', '--show-error', '--max-time', '20', domain + '/index.html?release-check=' + Date.now()], { maxBuffer: 1024 * 1024 })
+const publicIndex = (suffix = '/index.html?release-check=' + Date.now()) => execFileSync('curl', ['--fail', '--silent', '--show-error', '--max-time', '20', domain + suffix], { maxBuffer: 1024 * 1024 })
+function verifyPublic(expected) {
+  for (const suffix of ['/', '/index.html', '/index.html?release-check=' + Date.now()])
+    if (sha(publicIndex(suffix)) !== expected) throw new Error('PublicIndexMismatch')
+}
 function config() {
   let captured
   const filename = path.join(repo, 'config/deploy.js')
@@ -37,13 +41,6 @@ function files(dir, prefix = '') {
     return stat.isDirectory() ? files(path.join(dir, name), key + '/') : [key]
   })
 }
-function refresh(cfg) {
-  const ALY = require(path.join(repo, 'node_modules/aliyun-sdk'))
-  const cdn = new ALY.CDN({ accessKeyId: cfg.ossConfig.accessKeyId,
-    secretAccessKey: cfg.ossConfig.accessKeySecret, endpoint: 'https://cdn.aliyuncs.com', apiVersion: '2014-11-11' })
-  return new Promise((resolve, reject) => cdn.refreshObjectCaches({ ObjectType: 'File',
-    ObjectPath: domain + '/\n' + domain + '/index.html' }, (err) => err ? reject(err) : resolve()))
-}
 async function main() {
   if (!['status', 'deploy', 'rollback'].includes(action)) throw new Error('InvalidAction')
   const cfg = config()
@@ -52,7 +49,7 @@ async function main() {
   const current = await client.get('index.html')
   console.log('target=oss://gongkanyiyanmanage/ domain=' + domain + ' index_sha256=' + sha(current.content))
   if (action === 'status') {
-    if (sha(publicIndex()) !== sha(current.content)) throw new Error('PublicIndexMismatch')
+    verifyPublic(sha(current.content))
     console.log('public_index_verified')
     return
   }
@@ -62,7 +59,7 @@ async function main() {
     if (git('branch', '--show-current') !== 'release' || git('status', '--porcelain')) throw new Error('ReleaseBranchMustBeClean')
     const commit = git('rev-parse', 'HEAD')
     if (git('rev-parse', 'origin/release') !== commit) throw new Error('ReleaseNotPushed')
-    if (sha(publicIndex()) !== sha(current.content)) throw new Error('PublicIndexMismatch')
+    verifyPublic(sha(current.content))
     const dist = path.join(repo, 'dist')
     const entries = files(dist)
     if (!entries.includes('index.html')) throw new Error('MissingBuild')
@@ -107,8 +104,8 @@ async function main() {
   }
   const expected = action === 'deploy' ? manifest.newIndexSha256 : manifest.oldIndexSha256
   if (sha((await client.get('index.html')).content) !== expected) throw new Error('OriginVerifyFailed')
-  await refresh(cfg)
-  if (sha(publicIndex()) !== expected) throw new Error('PublicVerifyPending')
+  // 该域名直接 CNAME 到 OSS，无 CDN；核验根路径与首页即可确认公网生效。
+  verifyPublic(expected)
   console.log(action + '_verified index_sha256=' + expected + ' backup=' + backup)
 }
 main().catch(error => {
