@@ -26,8 +26,10 @@ if Path(sys.argv[0]).name == 'kubectl':
         print('rolled out')
     elif 'get' in a:
         current = image if (root/'patched').exists() else os.environ['FLOW_IMAGE_REPO']+'@sha256:'+'a'*64
+        containers = [{'name':'api','image':current}]
+        if os.environ.get('FAKE_SIDECAR'): containers.insert(0, {'name':'ocr','image':'synthetic-ocr@sha256:'+'c'*64})
         out({'metadata':{'namespace':'synthetic','resourceVersion':'1','generation':1},
-             'spec':{'replicas':1,'template':{'spec':{'containers':[{'name':'api','image':current}]}}},
+             'spec':{'replicas':1,'template':{'spec':{'containers':containers}}},
              'status':{'observedGeneration':1,'updatedReplicas':1,'readyReplicas':1,'availableReplicas':1}})
     else: raise SystemExit('unexpected kubectl call')
 elif a[0]=='sts': out({'AccountId':'1442361567788059'})
@@ -97,6 +99,12 @@ class AcsReleaseTests(unittest.TestCase):
         self.assertEqual(calls.count('StartPipelineRun'), 2)
         self.assertIn('PassPipelineValidate', calls)
         self.assertIn('rollout status', calls)
+
+    def test_sidecar_before_target_is_preserved(self):
+        self.env['FAKE_SIDECAR'] = '1'
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('/containers/1/image', self.calls())
 
     def test_no_confirmation_cannot_start_cloud_operations(self):
         self.env['FLOW_CONFIRM'] = 'no'

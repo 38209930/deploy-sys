@@ -72,14 +72,20 @@ def main():
         spec = current["spec"]
         replicas = spec.get("replicas", 1)
         containers = spec["template"]["spec"]["containers"]
+        matches = [i for i, c in enumerate(containers) if c["name"] == args.container]
+        if len(matches) != 1:
+            raise RuntimeError("目标容器名必须唯一存在")
+        index = matches[0]
+        original_pod = spec["template"]["spec"]
+        original_sidecars = [c for i, c in enumerate(containers) if i != index]
         if (current["metadata"].get("name", args.deployment) != args.deployment
                 or current["metadata"]["namespace"] != args.namespace or replicas != args.expected_replicas
-                or len(containers) != 1 or containers[0]["name"] != args.container):
+                or containers[index]["name"] != args.container):
             raise RuntimeError("Deployment、容器或副本数与预期不一致")
         if args.restart:
             if spec.get("paused"):
                 raise RuntimeError("Deployment 已暂停，不能重新部署")
-            args.image = containers[0]["image"]
+            args.image = containers[index]["image"]
             if not re.fullmatch(IMAGE_PATTERN, args.image):
                 raise RuntimeError("现网镜像未固定 digest，不能保证重启版本不变")
             status = current.get("status", {})
@@ -87,16 +93,16 @@ def main():
                     or any(status.get(key, 0) != replicas for key in
                            ("replicas", "updatedReplicas", "readyReplicas", "availableReplicas"))):
                 raise RuntimeError("Deployment 尚未完成上线，请等待就绪后重新部署")
-        old_repo = containers[0]["image"].split("@sha256:")[0].split(":")[0]
+        old_repo = containers[index]["image"].split("@sha256:")[0].split(":")[0]
         new_repo = args.image.split("@sha256:")[0]
         if old_repo != new_repo:
             raise RuntimeError("拟发布镜像仓库与现网不一致")
-        already_current = containers[0]["image"] == args.image
+        already_current = containers[index]["image"] == args.image
         patch = [
             {"op": "test", "path": "/metadata/resourceVersion", "value": current["metadata"]["resourceVersion"]},
             {"op": "test", "path": "/spec/replicas", "value": replicas},
-            {"op": "test", "path": "/spec/template/spec/containers/0/name", "value": args.container},
-            {"op": "replace", "path": "/spec/template/spec/containers/0/image", "value": args.image},
+            {"op": "test", "path": f"/spec/template/spec/containers/{index}/name", "value": args.container},
+            {"op": "replace", "path": f"/spec/template/spec/containers/{index}/image", "value": args.image},
         ]
         restarted_at = None
         if args.restart:
@@ -104,7 +110,7 @@ def main():
             annotations = dict(spec["template"].get("metadata", {}).get("annotations") or {})
             annotations["kubectl.kubernetes.io/restartedAt"] = restarted_at
             # resourceVersion 防止与其他发布竞争；只修改 Pod 模板注解。
-            patch[-1] = {"op": "test", "path": "/spec/template/spec/containers/0/image", "value": args.image}
+            patch[-1] = {"op": "test", "path": f"/spec/template/spec/containers/{index}/image", "value": args.image}
             if "metadata" not in spec["template"]:
                 patch.append({"op": "add", "path": "/spec/template/metadata", "value": {"annotations": annotations}})
             else:
@@ -120,8 +126,13 @@ def main():
         if restarted_at and updated["spec"]["template"].get("metadata", {}).get("annotations", {}).get("kubectl.kubernetes.io/restartedAt") != restarted_at:
             raise RuntimeError("重新部署注解回读不一致，可能发生并发发布")
         if (updated["spec"].get("replicas", 1) != replicas
-                or updated["spec"]["template"]["spec"]["containers"][0]["image"] != args.image):
+                or updated["spec"]["template"]["spec"]["containers"][index]["image"] != args.image):
             raise RuntimeError("上线后镜像或副本数回读不一致")
+        updated_pod = updated["spec"]["template"]["spec"]
+        if ([c for i, c in enumerate(updated_pod["containers"]) if i != index] != original_sidecars
+                or {k: v for k, v in updated_pod.items() if k != "containers"}
+                != {k: v for k, v in original_pod.items() if k != "containers"}):
+            raise RuntimeError("上线后侧车、卷或其他 Pod 配置发生变化")
         status = updated.get("status", {})
         if replicas and (status.get("observedGeneration", 0) < updated["metadata"]["generation"]
                          or status.get("updatedReplicas", 0) != replicas
